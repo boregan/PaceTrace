@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "pacetrace": {
+      "command": "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv_mcp/bin/python",
+      "args": ["/Users/benoregan/Documents/NEW VST/strava-pipeline/mcp_server.py"],
+      "env": {
+        "PACETRACE_USER": "ben",
+        "PACETRACE_MAX_HR": "185"
+      }
+    }
+  }
+}

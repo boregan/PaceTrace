@@ -1,0 +1,11 @@
+.env
+config/users/*.env
+*.pyc
+__pycache__/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+rate_limit_state.json

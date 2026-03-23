@@ -1,0 +1,8 @@
+#!/bin/sh
+'''exec' "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv_mcp/bin/python3.11" "$0" "$@"
+' '''
+import sys
+from mcp.cli import app
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(app())

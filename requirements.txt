@@ -1,0 +1,6 @@
+stravalib
+supabase
+python-dotenv
+fastapi
+uvicorn[standard]
+click
