@@ -526,3 +526,482 @@ def interpret_decoupling(dc: float) -> str:
     if dc < 10:
         return "moderate drift — some fatigue or heat stress"
     return "high drift — dehydration, poor pacing, or aerobic base needs work"
+
+
+# ── Race Prediction ────────────────────────────────────────────────────────────
+
+# Riegel exponents: longer races are disproportionately harder
+_RIEGEL_EXPONENTS = {
+    1_000:  1.04,
+    5_000:  1.06,
+    10_000: 1.06,
+    21_097: 1.07,
+    42_195: 1.08,
+}
+
+def riegel_predict(known_dist_m: float, known_time_s: float, target_dist_m: float) -> float:
+    """
+    Riegel endurance formula: T2 = T1 × (D2/D1)^e
+
+    Exponent varies by target distance (longer = more fatigue penalty).
+    Returns predicted time in seconds.
+    """
+    exp = _RIEGEL_EXPONENTS.get(int(target_dist_m), 1.06)
+    return known_time_s * (target_dist_m / known_dist_m) ** exp
+
+
+def predict_race_times(best_efforts: dict) -> dict:
+    """
+    Predict finish times at all standard distances from the best available efforts.
+
+    Uses the closest known effort as the seed — predictions based on a nearby
+    distance are more accurate than projecting from very different distances.
+
+    Returns {label: {predicted_time_s, predicted_pace, source_label, source_dist_m,
+                     confidence}} for all distances not already in best_efforts.
+    """
+    standard = [
+        ("1km",  1_000),
+        ("5km",  5_000),
+        ("10km", 10_000),
+        ("half", 21_097),
+        ("full", 42_195),
+    ]
+    label_to_dist = {k: v for k, v in standard}
+    dist_to_label = {v: k for k, v in standard}
+
+    # Build numeric lookup of known efforts: dist_m → time_s
+    known: list[tuple[float, float, str]] = []
+    for label, data in best_efforts.items():
+        d = label_to_dist.get(label)
+        if d:
+            known.append((d, data["time_s"], label))
+
+    if not known:
+        return {}
+
+    results = {}
+    for label, target_m in standard:
+        # Find best seed: prefer efforts closest in distance to target
+        seeds = sorted(known, key=lambda x: abs(math.log(x[0] / target_m)))
+        seed_dist, seed_time, seed_label = seeds[0]
+
+        predicted_s = riegel_predict(seed_dist, seed_time, target_m)
+        pace_s_km   = predicted_s / (target_m / 1000)
+
+        # Confidence degrades the further we project
+        ratio      = max(target_m, seed_dist) / min(target_m, seed_dist)
+        if ratio < 1.5:
+            confidence = "high"
+        elif ratio < 4:
+            confidence = "moderate"
+        else:
+            confidence = "estimate only"
+
+        results[label] = {
+            "predicted_time_s": round(predicted_s),
+            "predicted_time":   _fmt_time(predicted_s),
+            "predicted_pace":   f"{int(pace_s_km // 60)}:{int(pace_s_km % 60):02d}",
+            "source":           seed_label,
+            "confidence":       confidence,
+            # Include known PR if we have it
+            "pr_time":          best_efforts[label]["time_fmt"] if label in best_efforts else None,
+            "pr_pace":          best_efforts[label]["pace"] if label in best_efforts else None,
+        }
+
+    return results
+
+
+# ── Training Balance Analysis ──────────────────────────────────────────────────
+
+def training_balance_analysis(
+    runs: list[dict],
+    zone_data: list[dict],
+    weeks: int = 8,
+) -> dict:
+    """
+    Analyse training balance over a period against evidence-based recommendations.
+
+    Checks:
+      - 80/20 rule: 80% easy (Z1-Z2), 20% hard (Z3-Z5)
+      - Long run ratio: longest run ≥ 25% of weekly km
+      - Frequency: runs per week
+      - Weekly km consistency: avoid >25% spikes
+      - Easy run purity: are easy days truly easy?
+
+    Args:
+        runs:      list of activity dicts (from DB) in chronological order
+        zone_data: list of {strava_id, zones: {Z1..Z5}} dicts
+        weeks:     number of weeks analysed
+
+    Returns structured dict with findings and recommendations.
+    """
+    if not runs:
+        return {}
+
+    zone_map = {z["strava_id"]: z.get("zones", {}) for z in zone_data}
+
+    total_km  = sum((r.get("distance_m") or 0) for r in runs) / 1000
+    total_s   = sum((r.get("moving_time_s") or 0) for r in runs)
+    runs_pw   = len(runs) / weeks
+
+    # Aggregate zone time weighted by run duration
+    zone_seconds = {f"Z{i}": 0.0 for i in range(1, 6)}
+    total_zone_s = 0.0
+    for run in runs:
+        dur = run.get("moving_time_s") or 0
+        sid = run["strava_id"]
+        zones = zone_map.get(sid, {})
+        for z in ["Z1", "Z2", "Z3", "Z4", "Z5"]:
+            pct = zones.get(z, 0) / 100
+            zone_seconds[z] += dur * pct
+            total_zone_s    += dur * pct
+
+    zone_pct = {}
+    if total_zone_s > 0:
+        zone_pct = {z: round(s / total_zone_s * 100, 1)
+                    for z, s in zone_seconds.items()}
+
+    easy_pct  = zone_pct.get("Z1", 0) + zone_pct.get("Z2", 0)
+    hard_pct  = zone_pct.get("Z3", 0) + zone_pct.get("Z4", 0) + zone_pct.get("Z5", 0)
+
+    # Weekly km breakdown
+    weekly_km: dict = {}
+    for run in runs:
+        sd = (run.get("start_date") or "")[:10]
+        if not sd:
+            continue
+        try:
+            d = date.fromisoformat(sd)
+            days_until_sunday = (6 - d.weekday()) % 7
+            week_end = str(d + timedelta(days=days_until_sunday))
+            weekly_km[week_end] = weekly_km.get(week_end, 0.0) + (run.get("distance_m") or 0) / 1000
+        except Exception:
+            pass
+
+    weekly_vals = list(weekly_km.values())
+    avg_weekly  = statistics.mean(weekly_vals) if weekly_vals else 0
+    max_weekly  = max(weekly_vals) if weekly_vals else 0
+    km_cv       = (statistics.stdev(weekly_vals) / avg_weekly * 100
+                   if len(weekly_vals) > 1 and avg_weekly > 0 else 0)
+
+    # Long run check: does any week have a run ≥ 25% of that week's total?
+    long_run_ratios = []
+    for run in runs:
+        sd = (run.get("start_date") or "")[:10]
+        try:
+            d   = date.fromisoformat(sd)
+            wk  = str(d + timedelta(days=(6 - d.weekday()) % 7))
+            wkm = weekly_km.get(wk, 0)
+            if wkm > 0:
+                long_run_ratios.append((run.get("distance_m") or 0) / 1000 / wkm)
+        except Exception:
+            pass
+    has_long_runs = any(r >= 0.25 for r in long_run_ratios)
+
+    # Build recommendations
+    recs = []
+    if easy_pct < 70 and total_zone_s > 0:
+        recs.append(
+            f"Only {easy_pct:.0f}% of training time is in Z1-Z2. "
+            f"Evidence suggests 75-80% easy running optimises aerobic development "
+            f"while reducing injury risk. Consider replacing some moderate runs with easy efforts."
+        )
+    elif easy_pct >= 80:
+        recs.append(f"Great base — {easy_pct:.0f}% easy training. Well within the 80/20 guideline.")
+
+    if hard_pct > 25 and total_zone_s > 0:
+        recs.append(
+            f"{hard_pct:.0f}% of time in Z3-Z5 is on the high side. "
+            f"Too much intensity without easy recovery is a common overuse injury driver."
+        )
+
+    if runs_pw < 3:
+        recs.append(
+            f"Averaging {runs_pw:.1f} runs/week. Most training research shows "
+            f"4+ sessions per week yields meaningfully better aerobic adaptation."
+        )
+    elif runs_pw >= 5:
+        recs.append(f"Good consistency — {runs_pw:.1f} runs/week average.")
+
+    if not has_long_runs:
+        recs.append(
+            "No week has a run ≥ 25% of that week's total km. "
+            "A weekly long run (25-35% of weekly volume) is the single biggest driver "
+            "of endurance development."
+        )
+
+    if km_cv > 30:
+        recs.append(
+            f"Weekly km varies a lot (CV {km_cv:.0f}%). "
+            f"More consistent week-to-week volume reduces injury risk and builds "
+            f"adaptation more reliably."
+        )
+
+    return {
+        "weeks_analysed":  weeks,
+        "total_runs":      len(runs),
+        "total_km":        round(total_km, 1),
+        "runs_per_week":   round(runs_pw, 1),
+        "avg_weekly_km":   round(avg_weekly, 1),
+        "max_weekly_km":   round(max_weekly, 1),
+        "zone_pct":        zone_pct,
+        "easy_pct":        round(easy_pct, 1),
+        "hard_pct":        round(hard_pct, 1),
+        "has_long_runs":   has_long_runs,
+        "weekly_km":       weekly_km,
+        "recommendations": recs,
+    }
+
+
+# ── Route / Segment Trend Tracking ────────────────────────────────────────────
+
+def detect_recurring_routes(
+    activities: list[dict],
+    dist_threshold_pct: float = 0.08,
+    loc_threshold_deg:  float = 0.004,   # ~400m
+    min_runs:           int   = 3,
+) -> list[dict]:
+    """
+    Cluster runs into recurring routes and track performance over time.
+
+    Primary key: distance (within ±8%).
+    Secondary refinement: start location (within ~400m) if lat/lng available.
+
+    Returns list of route dicts sorted by frequency, each with:
+      name, run_count, distance_km, pace_trend, best_pace, recent_pace,
+      improvement_s_per_km, activity_ids
+    """
+    if not activities:
+        return []
+
+    runs = [
+        a for a in activities
+        if a.get("sport_type") in ("Run", "VirtualRun", "TrailRun")
+        and (a.get("distance_m") or 0) > 500
+        and a.get("avg_speed_ms")
+    ]
+    runs.sort(key=lambda a: a.get("start_date") or "")
+
+    # Cluster by distance proximity
+    used   = set()
+    routes = []
+
+    for i, anchor in enumerate(runs):
+        if i in used:
+            continue
+        anchor_d = anchor["distance_m"]
+        cluster  = [anchor]
+        used.add(i)
+
+        for j, cand in enumerate(runs):
+            if j in used:
+                continue
+            if abs(cand["distance_m"] - anchor_d) / anchor_d <= dist_threshold_pct:
+                # Optionally refine by start location
+                if _same_location(anchor, cand, loc_threshold_deg):
+                    cluster.append(cand)
+                    used.add(j)
+
+        if len(cluster) < min_runs:
+            continue
+
+        cluster.sort(key=lambda a: a.get("start_date") or "")
+        paces   = [1000 / a["avg_speed_ms"] for a in cluster]   # sec/km
+        dist_km = round(statistics.mean(a["distance_m"] for a in cluster) / 1000, 1)
+
+        # Trend: compare first third vs last third
+        n = len(paces)
+        third = max(1, n // 3)
+        early_pace = statistics.mean(paces[:third])
+        late_pace  = statistics.mean(paces[n - third:])
+        delta      = round(early_pace - late_pace, 1)   # positive = got faster
+
+        # Label
+        lat = anchor.get("start_lat")
+        lng = anchor.get("start_lng")
+        if lat and lng:
+            name = f"~{dist_km}km route ({lat:.3f},{lng:.3f})"
+        else:
+            name = f"~{dist_km}km route"
+
+        routes.append({
+            "name":                name,
+            "distance_km":         dist_km,
+            "run_count":           len(cluster),
+            "first_run":           (cluster[0].get("start_date") or "")[:10],
+            "last_run":            (cluster[-1].get("start_date") or "")[:10],
+            "best_pace":           _fmt_pace(min(paces)),
+            "recent_pace":         _fmt_pace(paces[-1]),
+            "avg_pace":            _fmt_pace(statistics.mean(paces)),
+            "improvement_s_km":    delta,
+            "trend":               _trend_label(delta),
+            "activity_ids":        [a["strava_id"] for a in cluster],
+        })
+
+    routes.sort(key=lambda r: r["run_count"], reverse=True)
+    return routes
+
+
+def _same_location(a: dict, b: dict, threshold: float) -> bool:
+    """True if both activities have location and are within threshold degrees."""
+    a_lat, a_lng = a.get("start_lat"), a.get("start_lng")
+    b_lat, b_lng = b.get("start_lat"), b.get("start_lng")
+    if not all([a_lat, a_lng, b_lat, b_lng]):
+        return True   # no location data — don't filter out, keep in cluster
+    return abs(a_lat - b_lat) <= threshold and abs(a_lng - b_lng) <= threshold
+
+
+def _fmt_pace(sec_per_km: float) -> str:
+    m, s = divmod(int(sec_per_km), 60)
+    return f"{m}:{s:02d}"
+
+
+def _trend_label(delta_s: float) -> str:
+    """delta_s = seconds/km improvement (positive = faster)."""
+    if delta_s > 15:   return "strong improvement"
+    if delta_s > 5:    return "improving"
+    if delta_s > -5:   return "consistent"
+    if delta_s > -15:  return "slightly slower"
+    return "slower over time"
+
+
+# ── Injury Risk Assessment ─────────────────────────────────────────────────────
+
+def injury_risk_assessment(
+    atl:          float,
+    ctl:          float,
+    daily_loads:  dict,
+    activities:   list[dict],
+) -> dict:
+    """
+    Multi-factor injury risk assessment using established sports science models.
+
+    Metrics computed:
+      ACWR (Acute:Chronic Workload Ratio) — primary predictor of injury risk
+        Formula: ATL / CTL
+        Safe zone: 0.8 – 1.3
+        Elevated:  1.3 – 1.5
+        Danger:    > 1.5
+
+      Weekly km spike — current week vs 4-week rolling average
+        > 30% increase: elevated risk
+        > 50% increase: high risk
+
+      Training monotony — repeating same effort daily reduces adaptation
+        Monotony = weekly_avg / weekly_stdev (< 2.0 is healthy)
+
+      Consecutive hard days — Z4-Z5 back-to-back without recovery
+
+    Returns dict with all metrics, risk_level, flags, and recommendations.
+    """
+    flags = []
+    recs  = []
+
+    # ── ACWR ──────────────────────────────────────────────────────────────────
+    acwr_val = round(atl / ctl, 2) if ctl > 0 else 0.0
+
+    if acwr_val > 1.7:
+        acwr_label = "DANGER ZONE"
+        flags.append(f"ACWR {acwr_val:.2f} — very high injury risk")
+        recs.append("Take 2-3 complete rest days immediately. Your acute load is dangerously "
+                    "high relative to your fitness base.")
+    elif acwr_val > 1.5:
+        acwr_label = "High risk"
+        flags.append(f"ACWR {acwr_val:.2f} — elevated injury risk")
+        recs.append("Reduce intensity and volume for 5-7 days. Only easy Z1-Z2 running.")
+    elif acwr_val > 1.3:
+        acwr_label = "Slightly elevated"
+        flags.append(f"ACWR {acwr_val:.2f} — slightly above ideal range")
+        recs.append("One easy/rest day before your next hard session.")
+    elif acwr_val >= 0.8:
+        acwr_label = "Optimal (sweet spot)"
+    elif acwr_val > 0:
+        acwr_label = "Low (undertraining)"
+        recs.append("Low training load relative to your base — safe to gradually increase volume.")
+    else:
+        acwr_label = "No data"
+
+    # ── Weekly km spike ───────────────────────────────────────────────────────
+    weekly_km: dict = {}
+    for run in activities:
+        sd = (run.get("start_date") or "")[:10]
+        try:
+            d = date.fromisoformat(sd)
+            wk = str(d + timedelta(days=(6 - d.weekday()) % 7))
+            weekly_km[wk] = weekly_km.get(wk, 0.0) + (run.get("distance_m") or 0) / 1000
+        except Exception:
+            pass
+
+    sorted_weeks = sorted(weekly_km.items())
+    spike_pct    = 0.0
+    if len(sorted_weeks) >= 5:
+        current_wk = sorted_weeks[-1][1]
+        prior_4    = [v for _, v in sorted_weeks[-5:-1]]
+        avg_prior  = statistics.mean(prior_4) if prior_4 else 0
+        if avg_prior > 0:
+            spike_pct = round((current_wk - avg_prior) / avg_prior * 100, 1)
+            if spike_pct > 50:
+                flags.append(f"Weekly km spike: +{spike_pct:.0f}% above 4-week average")
+                recs.append(f"Current week is {spike_pct:.0f}% above your recent average — "
+                             f"the 10% rule suggests max 10% increase per week.")
+            elif spike_pct > 30:
+                flags.append(f"Weekly km up {spike_pct:.0f}% — monitor carefully")
+
+    # ── Training monotony ─────────────────────────────────────────────────────
+    recent_loads = [v for _, v in sorted(daily_loads.items())[-14:] if v > 0]
+    monotony     = 0.0
+    if len(recent_loads) >= 4:
+        avg_load = statistics.mean(recent_loads)
+        std_load = statistics.stdev(recent_loads) if len(recent_loads) > 1 else 1
+        monotony = round(avg_load / std_load, 2) if std_load > 0 else 0
+        if monotony > 2.0:
+            flags.append(f"High training monotony ({monotony:.1f}) — vary your effort levels")
+            recs.append("Mix up your training intensity more. Alternating hard/easy days "
+                        "produces better adaptation than similar daily efforts.")
+
+    # ── Consecutive hard days ─────────────────────────────────────────────────
+    recent_runs = sorted(
+        [a for a in activities if a.get("avg_heartrate")],
+        key=lambda a: a.get("start_date") or ""
+    )[-10:]
+    consecutive_hard = 0
+    max_consecutive  = 0
+    for run in recent_runs:
+        hr  = run.get("avg_heartrate") or 0
+        pct = hr / 185  # approximate
+        if pct > 0.80:
+            consecutive_hard += 1
+            max_consecutive = max(max_consecutive, consecutive_hard)
+        else:
+            consecutive_hard = 0
+
+    if max_consecutive >= 3:
+        flags.append(f"{max_consecutive} consecutive hard days in recent runs")
+        recs.append("At least one easy day between hard sessions is essential for "
+                    "recovery and adaptation.")
+
+    # ── Overall risk level ────────────────────────────────────────────────────
+    if acwr_val > 1.5 or spike_pct > 50:
+        risk_level = "HIGH"
+    elif acwr_val > 1.3 or spike_pct > 30 or max_consecutive >= 3:
+        risk_level = "MODERATE"
+    elif flags:
+        risk_level = "LOW-MODERATE"
+    else:
+        risk_level = "LOW"
+
+    if not recs:
+        recs.append("Training load looks well managed. Keep building consistently.")
+
+    return {
+        "risk_level":         risk_level,
+        "acwr":               acwr_val,
+        "acwr_label":         acwr_label,
+        "weekly_km_spike_pct": spike_pct,
+        "monotony":           monotony,
+        "max_consecutive_hard": max_consecutive,
+        "flags":              flags,
+        "recommendations":    recs,
+        "weekly_km":          {w: round(v, 1) for w, v in sorted_weeks[-8:]},
+    }

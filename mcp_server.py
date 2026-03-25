@@ -47,6 +47,10 @@ from strava_pipeline.api.metrics import (
     interpret_tsb,
     interpret_ctl,
     interpret_decoupling,
+    predict_race_times,
+    training_balance_analysis,
+    detect_recurring_routes,
+    injury_risk_assessment,
     EFFORT_DISTANCES,
 )
 from strava_pipeline.claude.query_helper import build_context
@@ -246,6 +250,86 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="predict_race",
+            description=(
+                "Predict finish times at all standard distances (1km, 5km, 10km, half marathon, "
+                "full marathon) using the Riegel endurance formula seeded from the athlete's "
+                "actual best efforts. Predictions closest in distance to a known PR are labelled "
+                "'high confidence'; long extrapolations are 'estimate only'. "
+                "Shows both the predicted time and the actual PR if one exists. "
+                "Use to set realistic race goals, answer 'what could I run?' questions, "
+                "or assess current fitness across distances."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "user": {"type": "string", "description": "Athlete username", "default": DEFAULT_USER},
+                    "since": {"type": "string", "description": "Only use efforts from this date YYYY-MM-DD (default: all time)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="analyse_training",
+            description=(
+                "Analyse training balance over recent weeks against evidence-based guidelines. "
+                "Checks: 80/20 rule (80% easy Z1-Z2, 20% hard Z3-Z5), weekly long run ratio "
+                "(≥25% of weekly km), runs per week frequency, and weekly km consistency. "
+                "Returns structured findings and specific, actionable recommendations. "
+                "Use to answer 'am I training correctly?', identify polarisation issues, "
+                "or review whether the training mix supports the athlete's goals."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "user": {"type": "string", "description": "Athlete username", "default": DEFAULT_USER},
+                    "weeks": {"type": "integer", "description": "Weeks to analyse (default: 8)", "default": 8},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_route_trends",
+            description=(
+                "Detect recurring routes (runs of similar distance from the same start location) "
+                "and track performance trends over time on each one. "
+                "Shows best pace, recent pace, improvement in seconds/km, and whether the athlete "
+                "is getting faster, consistent, or slower on each regular route. "
+                "Use to track progression on a favourite loop, compare race-day vs training paces, "
+                "or identify which routes show the most improvement."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "user": {"type": "string", "description": "Athlete username", "default": DEFAULT_USER},
+                    "min_runs": {"type": "integer", "description": "Minimum runs to qualify as a recurring route (default: 3)", "default": 3},
+                    "since": {"type": "string", "description": "Only use runs from this date YYYY-MM-DD (default: all time)"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_injury_risk",
+            description=(
+                "Assess current injury risk using multiple sports science models: "
+                "ACWR (Acute:Chronic Workload Ratio — ATL÷CTL, safe zone 0.8-1.3), "
+                "weekly km spike vs 4-week rolling average (>30% elevated, >50% high risk), "
+                "training monotony (daily load variance — high monotony = poor adaptation), "
+                "and consecutive hard days without recovery. "
+                "Returns risk level (LOW/MODERATE/HIGH), specific flags, and concrete recommendations. "
+                "IMPORTANT: Frame risk flags constructively — the goal is to help the athlete train "
+                "smarter, not to make them feel guilty. Life circumstances affect training consistency."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "user": {"type": "string", "description": "Athlete username", "default": DEFAULT_USER},
+                    "days": {"type": "integer", "description": "Days of history to analyse (default: 90)", "default": 90},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
             name="get_wellness",
             description=(
                 "Get daily wellness data synced from Garmin Connect: HRV status, sleep score, "
@@ -293,6 +377,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await _compare_runs(arguments)
         elif name == "get_wellness":
             result = await _get_wellness(arguments)
+        elif name == "predict_race":
+            result = await _predict_race(arguments)
+        elif name == "analyse_training":
+            result = await _analyse_training(arguments)
+        elif name == "get_route_trends":
+            result = await _get_route_trends(arguments)
+        elif name == "get_injury_risk":
+            result = await _get_injury_risk(arguments)
         else:
             result = f"Unknown tool: {name}"
     except Exception as e:
@@ -874,6 +966,265 @@ async def _get_wellness(args: dict) -> str:
     if sleep_scores:
         avg_sleep = sum(sleep_scores) / len(sleep_scores)
         lines.append(f"Sleep score avg: {avg_sleep:.0f}/100")
+
+    return "\n".join(lines)
+
+
+# ── New feature handlers ───────────────────────────────────────────────────────
+
+async def _predict_race(args: dict) -> str:
+    user  = args.get("user", DEFAULT_USER)
+    since = args.get("since", "2000-01-01")
+
+    athlete_id = _resolve_athlete_id(user)
+    if not athlete_id:
+        return f"User '{user}' not found."
+
+    activities = get_activities_in_range(athlete_id, since, datetime.utcnow().isoformat())
+    runs = [a for a in activities if a.get("sport_type") in ("Run", "VirtualRun", "TrailRun")]
+
+    if not runs:
+        return f"No runs found for {user}."
+
+    # Collect best efforts from streams
+    best: dict = {}
+    for run in runs:
+        dist_m = run.get("distance_m") or 0
+        min_target = min(EFFORT_DISTANCES.values())
+        if dist_m < min_target * 0.9:
+            continue
+        stream = get_stream(run["strava_id"])
+        if not stream:
+            continue
+        dist_series = stream.get("distance_m") or []
+        time_series = stream.get("time_s") or []
+        efforts = find_best_efforts(dist_series, time_series)
+        for label, data in efforts.items():
+            if label not in best or data["time_s"] < best[label]["time_s"]:
+                best[label] = {**data, "activity_id": run["strava_id"],
+                               "date": (run.get("start_date") or "?")[:10]}
+
+    if not best:
+        return f"No stream data found for {user} — stream data is needed for race predictions."
+
+    predictions = predict_race_times(best)
+    if not predictions:
+        return "Not enough effort data to generate predictions."
+
+    since_str = f"since {since}" if since != "2000-01-01" else "all time"
+    lines = [
+        f"## Race Time Predictions — {user} ({since_str})",
+        "",
+        f"{'Distance':<8}  {'Predicted':<10}  {'Predicted Pace':<16}  {'Confidence':<14}  {'Based on':<8}  {'PR (if known)'}",
+        "─" * 78,
+    ]
+    for label in ["1km", "5km", "10km", "half", "full"]:
+        if label in predictions:
+            p = predictions[label]
+            pr_str = f"{p['pr_time']} ({p['pr_pace']}/km)" if p.get("pr_time") else "—"
+            lines.append(
+                f"{label:<8}  {p['predicted_time']:<10}  {p['predicted_pace']}/km{'':<8}  "
+                f"{p['confidence']:<14}  {p['source']:<8}  {pr_str}"
+            )
+
+    lines += [
+        "",
+        "Note: Predictions use the Riegel endurance formula. 'High confidence' = predicted from",
+        "a distance within 1.5× the target. 'Estimate only' = long extrapolation — treat as a guide.",
+    ]
+    return "\n".join(lines)
+
+
+async def _analyse_training(args: dict) -> str:
+    user  = args.get("user", DEFAULT_USER)
+    weeks = int(args.get("weeks", 8))
+
+    athlete_id = _resolve_athlete_id(user)
+    if not athlete_id:
+        return f"User '{user}' not found."
+
+    end   = datetime.utcnow()
+    start = end - timedelta(weeks=weeks)
+
+    activities = get_activities_in_range(athlete_id, start.isoformat(), end.isoformat())
+    runs = [a for a in activities if a.get("sport_type") in ("Run", "VirtualRun", "TrailRun")]
+
+    if not runs:
+        return f"No runs found for {user} in the last {weeks} weeks."
+
+    # Fetch zone data for each run from streams
+    zone_data = []
+    for run in runs:
+        stream = get_stream(run["strava_id"])
+        if stream and stream.get("heartrate"):
+            zones = zone_distribution(stream["heartrate"], MAX_HR)
+            zone_data.append({"strava_id": run["strava_id"], "zones": zones})
+        else:
+            zone_data.append({"strava_id": run["strava_id"], "zones": {}})
+
+    result = training_balance_analysis(runs, zone_data, weeks=weeks)
+    if not result:
+        return f"Insufficient data to analyse training for {user}."
+
+    lines = [
+        f"## Training Balance Analysis — {user} (last {weeks} weeks)",
+        "",
+        f"Runs:           {result['total_runs']}  ({result['runs_per_week']:.1f}/week)",
+        f"Volume:         {result['total_km']:.1f}km total  ({result['avg_weekly_km']:.1f}km avg/week,  peak {result['max_weekly_km']:.1f}km)",
+    ]
+
+    if result["zone_pct"]:
+        lines += [
+            "",
+            "### Zone distribution (% of running time)",
+        ]
+        for z, pct in result["zone_pct"].items():
+            bar = "█" * int(pct / 5)
+            lines.append(f"  {z}: {pct:>5.1f}%  {bar}")
+        lines.append(f"\n  Easy (Z1+Z2): {result['easy_pct']:.1f}%   Hard (Z3-Z5): {result['hard_pct']:.1f}%")
+        lines.append(f"  80/20 target: 80% easy / 20% hard")
+    else:
+        lines.append("\n(No HR zone data available — stream data needed for zone breakdown)")
+
+    lines += [
+        "",
+        "### Weekly km",
+    ]
+    for week, km in sorted(result["weekly_km"].items())[-weeks:]:
+        bar = "█" * min(int(km / 2), 30)
+        lines.append(f"  w/e {week}:  {km:5.1f}km  {bar}")
+
+    lines += ["", "### Findings & Recommendations"]
+    if result["recommendations"]:
+        for rec in result["recommendations"]:
+            lines.append(f"• {rec}")
+    else:
+        lines.append("• No significant issues found — training looks well balanced.")
+
+    if result.get("has_long_runs"):
+        lines.append("• Long run check: ✓ at least one run ≥25% of weekly volume each week")
+    else:
+        lines.append("• Long run check: ✗ no week has a run ≥25% of weekly volume")
+
+    return "\n".join(lines)
+
+
+async def _get_route_trends(args: dict) -> str:
+    user     = args.get("user", DEFAULT_USER)
+    min_runs = int(args.get("min_runs", 3))
+    since    = args.get("since", "2000-01-01")
+
+    athlete_id = _resolve_athlete_id(user)
+    if not athlete_id:
+        return f"User '{user}' not found."
+
+    activities = get_activities_in_range(athlete_id, since, datetime.utcnow().isoformat())
+    if not activities:
+        return f"No activities found for {user}."
+
+    routes = detect_recurring_routes(activities, min_runs=min_runs)
+
+    if not routes:
+        return (
+            f"No recurring routes found for {user} "
+            f"(need ≥{min_runs} runs of similar distance from the same location)."
+        )
+
+    since_str = f"since {since}" if since != "2000-01-01" else "all time"
+    lines = [
+        f"## Recurring Routes — {user} ({since_str})",
+        f"{len(routes)} route(s) found with ≥{min_runs} runs",
+        "",
+    ]
+    for i, r in enumerate(routes, 1):
+        delta = r["improvement_s_km"]
+        delta_str = f"+{delta:.0f}s/km faster" if delta > 0 else f"{abs(delta):.0f}s/km slower" if delta < 0 else "no change"
+        lines += [
+            f"### {i}. {r['name']}",
+            f"Runs: {r['run_count']}  |  Period: {r['first_run']} → {r['last_run']}",
+            f"Best pace: {r['best_pace']}/km  |  Recent pace: {r['recent_pace']}/km  |  Avg: {r['avg_pace']}/km",
+            f"Trend: {r['trend']} ({delta_str} from first third to last third)",
+            f"Activity IDs: {', '.join(str(i) for i in r['activity_ids'][:5])}"
+            + (" ..." if len(r['activity_ids']) > 5 else ""),
+            "",
+        ]
+
+    return "\n".join(lines)
+
+
+async def _get_injury_risk(args: dict) -> str:
+    user = args.get("user", DEFAULT_USER)
+    days = int(args.get("days", 90))
+
+    athlete_id = _resolve_athlete_id(user)
+    if not athlete_id:
+        return f"User '{user}' not found."
+
+    end   = datetime.utcnow()
+    start = end - timedelta(days=days + 42)   # extra history for CTL warmup
+
+    activities = get_activities_in_range(athlete_id, start.isoformat(), end.isoformat())
+    runs = [a for a in activities if a.get("sport_type") in ("Run", "VirtualRun", "TrailRun")]
+
+    if not runs:
+        return f"No runs found for {user}."
+
+    # Build daily loads
+    daily_loads: dict = {}
+    for run in runs:
+        if not run.get("start_date"):
+            continue
+        day = date.fromisoformat(run["start_date"][:10])
+        trimp = trimp_from_avg_hr(
+            run.get("avg_heartrate") or 0,
+            run.get("moving_time_s") or 0,
+            MAX_HR, REST_HR, GENDER,
+        )
+        daily_loads[day] = daily_loads.get(day, 0.0) + trimp
+
+    metrics = compute_fitness_metrics(daily_loads)
+    atl = metrics["atl"]
+    ctl = metrics["ctl"]
+
+    result = injury_risk_assessment(atl, ctl, daily_loads, runs)
+
+    risk_icons = {"LOW": "✓", "LOW-MODERATE": "⚠", "MODERATE": "⚠⚠", "HIGH": "🚨"}
+    icon = risk_icons.get(result["risk_level"], "?")
+
+    lines = [
+        f"## Injury Risk Assessment — {user}",
+        "",
+        f"Risk level:  {icon} {result['risk_level']}",
+        "",
+        "### Metrics",
+        f"ACWR:          {result['acwr']:.2f}  ({result['acwr_label']})  — safe zone: 0.8–1.3",
+        f"CTL (fitness): {ctl:.1f}",
+        f"ATL (fatigue): {atl:.1f}",
+    ]
+
+    if result["weekly_km_spike_pct"] != 0:
+        lines.append(f"Weekly km spike: {result['weekly_km_spike_pct']:+.0f}% vs 4-week avg")
+
+    if result["monotony"] > 0:
+        lines.append(f"Training monotony: {result['monotony']:.2f}  (healthy < 2.0)")
+
+    if result["max_consecutive_hard"] > 0:
+        lines.append(f"Consecutive hard days: {result['max_consecutive_hard']}")
+
+    if result["flags"]:
+        lines += ["", "### Flags"]
+        for f in result["flags"]:
+            lines.append(f"• {f}")
+
+    lines += ["", "### Recommendations"]
+    for rec in result["recommendations"]:
+        lines.append(f"• {rec}")
+
+    if result["weekly_km"]:
+        lines += ["", "### Weekly km (recent)"]
+        for week, km in sorted(result["weekly_km"].items()):
+            bar = "█" * min(int(km / 2), 25)
+            lines.append(f"  w/e {week}:  {km:5.1f}km  {bar}")
 
     return "\n".join(lines)
 
