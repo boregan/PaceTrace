@@ -437,14 +437,27 @@ def create_sse_app():
 
 # For Railway: combine webhook FastAPI app with MCP SSE on /mcp/*
 def create_combined_app():
-    from starlette.middleware.base import BaseHTTPMiddleware
+    from mcp.server.sse import SseServerTransport
+    from starlette.requests import Request
     from strava_pipeline.webhook.app import app as fastapi_app
-    from starlette.routing import Mount
 
-    sse_app = create_sse_app()
+    # Register routes directly on FastAPI to avoid Starlette mount root_path
+    # doubling the /mcp prefix (which would produce /mcp/mcp/messages).
+    sse_transport = SseServerTransport("/mcp/messages")
 
-    # Mount MCP SSE under /mcp on the existing FastAPI app
-    fastapi_app.mount("/mcp", sse_app)
+    @fastapi_app.get("/mcp/sse")
+    async def handle_sse(request: Request):
+        user = request.query_params.get("user", DEFAULT_USER)
+        token = _request_user.set(user)
+        try:
+            async with sse_transport.connect_sse(
+                request.scope, request.receive, request._send
+            ) as streams:
+                await server.run(streams[0], streams[1], server.create_initialization_options())
+        finally:
+            _request_user.reset(token)
+
+    fastapi_app.add_route("/mcp/messages", sse_transport.handle_post_message, methods=["POST"])
     return fastapi_app
 
 
