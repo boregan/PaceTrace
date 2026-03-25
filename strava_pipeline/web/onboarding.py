@@ -7,6 +7,7 @@ Routes:
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 
@@ -91,7 +92,7 @@ async def oauth_callback(code: str = "", error: str = ""):
     client_id = os.environ.get("STRAVA_CLIENT_ID")
     client_secret = os.environ.get("STRAVA_CLIENT_SECRET")
 
-    async with httpx.AsyncClient() as http:
+    async with httpx.AsyncClient(http2=False) as http:
         resp = await http.post(STRAVA_TOKEN_URL, data={
             "client_id": client_id,
             "client_secret": client_secret,
@@ -115,10 +116,11 @@ async def oauth_callback(code: str = "", error: str = ""):
         get_tokens_by_athlete_id,
     )
 
-    existing = get_tokens_by_athlete_id(athlete_id)
+    existing = await asyncio.to_thread(get_tokens_by_athlete_id, athlete_id)
     username = existing["username"] if existing else _unique_username(_slugify(display_name))
 
-    upsert_athlete_tokens(
+    await asyncio.to_thread(
+        upsert_athlete_tokens,
         athlete_id=athlete_id,
         username=username,
         display_name=display_name,
