@@ -2,134 +2,23 @@ No rates present in response headers
 No rates present in response headers
 No rates present in response headers
 No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
+[runner] Processing 1 user(s).
+
+============================================================
+[runner] User: ben (athlete_id=8909775)
+[runner] Rate limit status: {'15min_used': 0, '15min_remaining': 95, 'day_used': 616, 'day_remaining': 334}
+[activity_fetcher] Loading existing IDs for athlete 8909775...
+[activity_fetcher] 730 activities already in database.
+[activity_fetcher] Done. 926 fetched, 0 new, 0 already stored.
+[runner] 4 activities missing stream data.
+  [stream_fetcher] WARN: failed to fetch streams for 12612065812: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 14661983365: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 10056773067: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 15856412498: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+[stream_fetcher] Done. 0 stored, 0 already present.
+
+[runner] Backfill complete.
+sys:1: ResourceWarning: unclosed <ssl.SSLSocket fd=6, family=2, type=1, proto=0, laddr=('192.168.1.228', 62061), raddr=('104.18.38.10', 443)>
 No rates present in response headers
 No rates present in response headers
 No rates present in response headers
@@ -138,768 +27,136 @@ No rates present in response headers
 
 ============================================================
 [runner] User: ben (athlete_id=8909775)
-[runner] Rate limit status: {'15min_used': 0, '15min_remaining': 95, 'day_used': 380, 'day_remaining': 570}
+[runner] Rate limit status: {'15min_used': 35, '15min_remaining': 60, 'day_used': 651, 'day_remaining': 299}
+[activity_fetcher] Loading existing IDs for athlete 8909775...
+[activity_fetcher] 730 activities already in database.
+[activity_fetcher] Done. 926 fetched, 0 new, 0 already stored.
+[runner] 4 activities missing stream data.
+  [stream_fetcher] WARN: failed to fetch streams for 12612065812: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 14661983365: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 10056773067: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 15856412498: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+[stream_fetcher] Done. 0 stored, 0 already present.
+
+[runner] Backfill complete.
+sys:1: ResourceWarning: unclosed <ssl.SSLSocket fd=6, family=2, type=1, proto=0, laddr=('192.168.1.228', 62276), raddr=('172.64.149.246', 443)>
+No rates present in response headers
+No rates present in response headers
+No rates present in response headers
+No rates present in response headers
+[runner] Processing 1 user(s).
+
+============================================================
+[runner] User: ben (athlete_id=8909775)
+[runner] Rate limit status: {'15min_used': 0, '15min_remaining': 95, 'day_used': 686, 'day_remaining': 264}
+[activity_fetcher] Loading existing IDs for athlete 8909775...
+[activity_fetcher] 730 activities already in database.
+[activity_fetcher] Done. 927 fetched, 0 new, 0 already stored.
+[runner] 4 activities missing stream data.
+  [stream_fetcher] WARN: failed to fetch streams for 12612065812: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 14661983365: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 10056773067: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 15856412498: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+[stream_fetcher] Done. 0 stored, 0 already present.
+
+[runner] Backfill complete.
+sys:1: ResourceWarning: unclosed <ssl.SSLSocket fd=6, family=2, type=1, proto=0, laddr=('192.168.1.228', 63465), raddr=('172.64.149.246', 443)>
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:py.warnings:/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/stravalib/client.py:1738: FutureWarning: The "resolution" parameter is undocumented in the Strava API. Its use may lead to unexpected behavior or errors in the future.
+  return self._get_streams(
+
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+[runner] Processing 1 user(s).
+
+============================================================
+[runner] User: ben (athlete_id=8909775)
+[runner] Rate limit status: {'15min_used': 0, '15min_remaining': 95, 'day_used': 950, 'day_remaining': 0}
+[activity_fetcher] Loading existing IDs for athlete 8909775...
+[activity_fetcher] 730 activities already in database.
+[rate_limiter] Daily limit reached. Sleeping 48754s...
+[activity_fetcher] Done. 927 fetched, 0 new, 0 already stored.
+[runner] 4 activities missing stream data.
+  [stream_fetcher] WARN: failed to fetch streams for 12612065812: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 14661983365: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 10056773067: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 15856412498: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+[stream_fetcher] Done. 0 stored, 0 already present.
+
+[runner] Backfill complete.
+sys:1: ResourceWarning: unclosed <ssl.SSLSocket fd=6, family=2, type=1, proto=0, laddr=('192.168.1.228', 63510), raddr=('172.64.149.246', 443)>
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:py.warnings:/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/stravalib/client.py:1738: FutureWarning: The "resolution" parameter is undocumented in the Strava API. Its use may lead to unexpected behavior or errors in the future.
+  return self._get_streams(
+
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+[runner] Processing 1 user(s).
+
+============================================================
+[runner] User: ben (athlete_id=8909775)
+[runner] Rate limit status: {'15min_used': 0, '15min_remaining': 95, 'day_used': 950, 'day_remaining': 0}
+[activity_fetcher] Loading existing IDs for athlete 8909775...
+[activity_fetcher] 730 activities already in database.
+[rate_limiter] Daily limit reached. Sleeping 56409s...
+[activity_fetcher] Done. 927 fetched, 0 new, 0 already stored.
+[runner] 4 activities missing stream data.
+  [stream_fetcher] WARN: failed to fetch streams for 12612065812: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 14661983365: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 10056773067: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 15856412498: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+[stream_fetcher] Done. 0 stored, 0 already present.
+
+[runner] Backfill complete.
+sys:1: ResourceWarning: unclosed <ssl.SSLSocket fd=6, family=2, type=1, proto=0, laddr=('192.168.1.228', 63938), raddr=('104.18.38.10', 443)>
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:py.warnings:/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/stravalib/client.py:1738: FutureWarning: The "resolution" parameter is undocumented in the Strava API. Its use may lead to unexpected behavior or errors in the future.
+  return self._get_streams(
+
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+[runner] Processing 1 user(s).
+
+============================================================
+[runner] User: ben (athlete_id=8909775)
+[runner] Rate limit status: {'15min_used': 0, '15min_remaining': 95, 'day_used': 950, 'day_remaining': 0}
+[activity_fetcher] Loading existing IDs for athlete 8909775...
+[activity_fetcher] 730 activities already in database.
+[rate_limiter] Daily limit reached. Sleeping 70803s...
+[activity_fetcher] Done. 927 fetched, 0 new, 0 already stored.
+[runner] 4 activities missing stream data.
+  [stream_fetcher] WARN: failed to fetch streams for 12612065812: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 14661983365: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 10056773067: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+  [stream_fetcher] WARN: failed to fetch streams for 15856412498: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
+[stream_fetcher] Done. 0 stored, 0 already present.
+
+[runner] Backfill complete.
+sys:1: ResourceWarning: unclosed <ssl.SSLSocket fd=6, family=2, type=1, proto=0, laddr=('192.168.1.228', 64337), raddr=('104.18.38.10', 443)>
+WARNING:py.warnings:/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/stravalib/client.py:1738: FutureWarning: The "resolution" parameter is undocumented in the Strava API. Its use may lead to unexpected behavior or errors in the future.
+  return self._get_streams(
+
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
+[runner] Processing 1 user(s).
+
+============================================================
+[runner] User: ben (athlete_id=8909775)
+[runner] Rate limit status: {'15min_used': 0, '15min_remaining': 95, 'day_used': 950, 'day_remaining': 0}
 [token_manager] Token refreshed for ben
 [activity_fetcher] Loading existing IDs for athlete 8909775...
 [activity_fetcher] 730 activities already in database.
-[activity_fetcher] Done. 926 fetched, 0 new, 0 already stored.
-[runner] 420 activities missing stream data.
-  [stream_fetcher] WARN: failed to fetch streams for 12612065812: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
-  [2/420] Stored 376 points for activity 4990534567
-  [3/420] Stored 617 points for activity 3069311912
-  [4/420] Stored 428 points for activity 9989000107
-  [5/420] Stored 353 points for activity 2736806829
-  [6/420] Stored 395 points for activity 7583376302
-  [7/420] Stored 1210 points for activity 3649356720
-  [8/420] Stored 503 points for activity 7660034994
-  [9/420] Stored 1116 points for activity 3542688691
-  [10/420] Stored 2908 points for activity 13558391732
-  [11/420] Stored 290 points for activity 10294739895
-  [12/420] Stored 375 points for activity 9719557051
-  [13/420] Stored 270 points for activity 12301579200
-  [14/420] Stored 3661 points for activity 14779462596
-  [15/420] Stored 3335 points for activity 14187260870
-  [16/420] Stored 337 points for activity 5217409994
-  [17/420] Stored 517 points for activity 11789851603
-  [18/420] Stored 2598 points for activity 15674272724
-  [19/420] Stored 485 points for activity 11143125972
-  [20/420] Stored 480 points for activity 4733021142
-  [21/420] Stored 430 points for activity 4350389207
-  [22/420] Stored 327 points for activity 12213449695
-  [23/420] Stored 2503 points for activity 17354247136
-  [24/420] Stored 455 points for activity 8594652128
-  [25/420] Stored 5876 points for activity 14446924770
-  [26/420] Stored 1010 points for activity 4164271071
-  [27/420] Stored 73 points for activity 9848749028
-  [28/420] Stored 374 points for activity 5031273444
-  [29/420] Stored 724 points for activity 12377484264
-  [30/420] Stored 510 points for activity 12509856745
-  [31/420] Stored 228 points for activity 8158522350
-  [32/420] Stored 2734 points for activity 4207096815
-  [33/420] Stored 439 points for activity 5786768377
-  [34/420] Stored 391 points for activity 8455934974
-  [35/420] Stored 366 points for activity 4643400702
-  [36/420] Stored 814 points for activity 12258069509
-  [37/420] Stored 98 points for activity 11735202824
-  [38/420] Stored 685 points for activity 10959578121
-  [39/420] Stored 2400 points for activity 17663134730
-  [40/420] Stored 784 points for activity 9419179017
-  [41/420] Stored 684 points for activity 9139835914
-  [42/420] Stored 431 points for activity 5604998155
-  [43/420] Stored 319 points for activity 9320674322
-  [44/420] Stored 397 points for activity 5996557332
-  [45/420] Stored 377 points for activity 8494185493
-  [46/420] Stored 714 points for activity 4713020438
-  [47/420] Stored 509 points for activity 9069771800
-  [48/420] Stored 617 points for activity 6098908192
-  [49/420] Stored 341 points for activity 5992313894
-  [50/420] Stored 54 points for activity 7126119463
-  [51/420] Stored 210 points for activity 6258422824
-  [52/420] Stored 3570 points for activity 14206145580
-  [53/420] Stored 471 points for activity 12139187250
-  [54/420] Stored 854 points for activity 8516064308
-  [55/420] Stored 1204 points for activity 15560574974
-  [56/420] Stored 575 points for activity 9463098422
-  [57/420] Stored 416 points for activity 5547338808
-  [58/420] Stored 254 points for activity 4365528124
-  [59/420] Stored 554 points for activity 8370142275
-  [60/420] Stored 267 points for activity 12451945544
-  [61/420] Stored 646 points for activity 11030608973
-  [62/420] Stored 439 points for activity 5958773842
-  [63/420] Stored 310 points for activity 12332469336
-  [64/420] Stored 519 points for activity 6966168665
-[rate_limiter] 15-min limit reached. Sleeping 810s...
-  [65/420] Stored 4072 points for activity 14706850909
-[rate_limiter] 15-min limit reached. Sleeping 3s...
-  [66/420] Stored 643 points for activity 6686942303
-  [67/420] Stored 593 points for activity 10137953376
-  [68/420] Stored 481 points for activity 4482983012
-  [69/420] Stored 1301 points for activity 11078325351
-  [70/420] Stored 502 points for activity 9945916520
-  [71/420] Stored 307 points for activity 8955493480
-[rate_limiter] 15-min limit reached. Sleeping 3s...
-  [72/420] Stored 3232 points for activity 14139763818
-  [73/420] Stored 456 points for activity 6859258989
-  [74/420] Stored 970 points for activity 15459273838
-  [75/420] Stored 436 points for activity 13137374318
-  [76/420] Stored 263 points for activity 11735417967
-  [77/420] Stored 413 points for activity 6615192686
-  [78/420] Stored 198 points for activity 5948107892
-  [79/420] Stored 870 points for activity 13373105275
-  [80/420] Stored 485 points for activity 8648666238
-  [81/420] Stored 354 points for activity 8687447169
-  [stream_fetcher] WARN: failed to fetch streams for 14661983365: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
-  [83/420] Stored 347 points for activity 6491204747
-  [84/420] Stored 3600 points for activity 17592464528
-  [85/420] Stored 480 points for activity 10532318352
-[rate_limiter] 15-min limit reached. Sleeping 1s...
-  [86/420] Stored 362 points for activity 8194663568
-  [87/420] Stored 730 points for activity 9375550611
-  [88/420] Stored 420 points for activity 13292711060
-  [89/420] Stored 576 points for activity 8998081683
-  [90/420] Stored 3916 points for activity 14027330710
-  [91/420] Stored 979 points for activity 9550472342
-  [92/420] Stored 531 points for activity 9053031575
-  [93/420] Stored 229 points for activity 5927253136
-  [94/420] Stored 911 points for activity 5147835537
-  [95/420] Stored 325 points for activity 4653573268
-[rate_limiter] 15-min limit reached. Sleeping 43s...
-  [96/420] Stored 405 points for activity 4550698144
-  [97/420] Stored 473 points for activity 10809164966
-  [98/420] Stored 5465 points for activity 13582793899
-  [99/420] Stored 359 points for activity 8556076205
-  [100/420] Stored 1790 points for activity 15437407406
-  [101/420] Stored 484 points for activity 5301404846
-  [102/420] Stored 1309 points for activity 3658280111
-  [103/420] Stored 365 points for activity 4432694453
-  [104/420] Stored 1104 points for activity 3835190455
-  [105/420] Stored 363 points for activity 7419946170
-  [106/420] Stored 2672 points for activity 17330453691
-  [107/420] Stored 420 points for activity 6347949245
-  [108/420] Stored 1102 points for activity 3802713279
-  [109/420] Stored 427 points for activity 7120473292
-  [110/420] Stored 553 points for activity 5229182160
-  [111/420] Stored 1718 points for activity 17439573201
-  [112/420] Stored 721 points for activity 13335198933
-  [113/420] Stored 397 points for activity 12870053079
-  [114/420] Stored 777 points for activity 12198737113
-  [115/420] Stored 1431 points for activity 3722564825
-  [116/420] Stored 497 points for activity 6870111457
-  [117/420] Stored 378 points for activity 4570295522
-  [118/420] Stored 1472 points for activity 4129455338
-  [119/420] Stored 2607 points for activity 16162141421
-  [120/420] Stored 2269 points for activity 10321812719
-  [121/420] Stored 706 points for activity 4675448048
-  [122/420] Stored 1610 points for activity 10085735668
-  [123/420] Stored 3147 points for activity 15788623094
-  [124/420] Stored 3030 points for activity 16732427511
-  [125/420] Stored 452 points for activity 7447430390
-  [126/420] Stored 2684 points for activity 15596276985
-  [127/420] Stored 1199 points for activity 3511584000
-  [128/420] Stored 581 points for activity 5045755137
-  [129/420] Stored 687 points for activity 10189583618
-  [130/420] Stored 6455 points for activity 14518406403
-  [131/420] Stored 5827 points for activity 15967823108
-  [132/420] Stored 614 points for activity 10032643331
-  [133/420] Stored 458 points for activity 13355056391
-  [134/420] Stored 865 points for activity 10127316231No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-
-  [135/420] Stored 4536 points for activity 13939012877
-  [136/420] Stored 2690 points for activity 14830761230
-  [137/420] Stored 444 points for activity 6161014029
-  [138/420] Stored 406 points for activity 8638033172
-  [139/420] Stored 1212 points for activity 3597485337
-  [140/420] Stored 586 points for activity 7921757467
-  [141/420] Stored 380 points for activity 8741080355
-  [142/420] Stored 750 points for activity 12645704997
-  [143/420] Stored 1696 points for activity 4172676390
-  [144/420] Stored 372 points for activity 4616068392
-  [145/420] Stored 997 points for activity 3738230057
-  [146/420] Stored 4326 points for activity 17238918444
-  [147/420] Stored 3522 points for activity 17393620269
-  [148/420] Stored 3475 points for activity 16631657775
-  [149/420] Stored 773 points for activity 8944076080
-  [150/420] Stored 499 points for activity 12535418165
-  [151/420] Stored 329 points for activity 9789435189
-  [152/420] Stored 2222 points for activity 14071418168
-  [153/420] Stored 5927 points for activity 14086546747
-  [154/420] Stored 772 points for activity 6533635387
-  [155/420] Stored 3661 points for activity 17733201218
-  [156/420] Stored 648 points for activity 9822303555
-  [157/420] Stored 3494 points for activity 15515927877
-  [158/420] Stored 624 points for activity 6309985605
-  [159/420] Stored 2329 points for activity 17387171143
-[rate_limiter] 15-min limit reached. Sleeping 808s...
-  [160/420] Stored 582 points for activity 10217893195
-[rate_limiter] 15-min limit reached. Sleeping 3s...
-  [161/420] Stored 395 points for activity 9302388043
-  [162/420] Stored 647 points for activity 5691383115
-  [163/420] Stored 348 points for activity 4870772047
-  [164/420] Stored 539 points for activity 9894153553
-  [165/420] Stored 2066 points for activity 14469885265
-  [166/420] Stored 99 points for activity 7115707733
-[rate_limiter] 15-min limit reached. Sleeping 3s...
-  [167/420] Stored 1089 points for activity 11723625814
-  [168/420] Stored 411 points for activity 6326236518
-  [169/420] Stored 667 points for activity 5191267687
-  [170/420] Stored 4904 points for activity 14854129002
-  [171/420] Stored 1800 points for activity 17819190635
-  [172/420] Stored 493 points for activity 5701395820
-  [173/420] Stored 287 points for activity 4948018539
-  [174/420] Stored 366 points for activity 3960737133
-  [175/420] Stored 452 points for activity 8250488178
-  [176/420] Stored 562 points for activity 5383259511
-  [177/420] Stored 4438 points for activity 17794960760
-  [178/420] Stored 642 points for activity 7834760568
-  [179/420] Stored 635 points for activity 11182282111
-  [180/420] Stored 361 points for activity 5092482432
-[rate_limiter] 15-min limit reached. Sleeping 1s...
-  [181/420] Stored 744 points for activity 5068025218
-  [182/420] Stored 458 points for activity 5651580292
-  [183/420] Stored 4077 points for activity 17174551941
-  [184/420] Stored 543 points for activity 10994898316
-  [185/420] Stored 3051 points for activity 13681253775
-  [186/420] Stored 1577 points for activity 15057712528
-  [187/420] Stored 414 points for activity 5489853844
-  [188/420] Stored 1677 points for activity 4055643545
-  [189/420] Stored 504 points for activity 5206543771
-  [190/420] Stored 4863 points for activity 13459680669
-[rate_limiter] 15-min limit reached. Sleeping 42s...
-  [191/420] Stored 499 points for activity 6981961121
-  [192/420] Stored 847 points for activity 9731462568
-  [193/420] Stored 452 points for activity 9744911790
-  [194/420] Stored 724 points for activity 9982715311
-  [195/420] Stored 499 points for activity 6116539823
-  [196/420] Stored 481 points for activity 4825433519
-  [197/420] Stored 488 points for activity 6908110264
-  [198/420] Stored 869 points for activity 4786965947
-  [199/420] Stored 218 points for activity 7814002109
-  [200/420] Stored 594 points for activity 6833210817
-  [201/420] Stored 741 points for activity 6998398403
-  [stream_fetcher] WARN: failed to fetch streams for 10056773067: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
-  [203/420] Stored 253 points for activity 8664733136
-  [204/420] Stored 4354 points for activity 13772047831
-  [205/420] Stored 476 points for activity 5670985178
-  [206/420] Stored 491 points for activity 3918185948
-  [207/420] Stored 537 points for activity 12236357085
-  [208/420] Stored 413 points for activity 9809386973
-  [209/420] Stored 324 points for activity 8793048541
-  [210/420] Stored 664 points for activity 13247657440
-  [211/420] Stored 574 points for activity 7953145309
-  [212/420] Stored 328 points for activity 6212165089
-  [213/420] Stored 1293 points for activity 3623812577
-  [214/420] Stored 571 points for activity 9804201444
-  [215/420] Stored 458 points for activity 11629143527
-  [216/420] Stored 757 points for activity 9170316776
-  [217/420] Stored 401 points for activity 7252841960
-  [218/420] Stored 499 points for activity 6599525869
-  [219/420] Stored 366 points for activity 6021045747
-  [220/420] Stored 553 points for activity 5334109686
-  [221/420] Stored 4230 points for activity 13790180856
-  [222/420] Stored 4282 points for activity 16498081273
-  [223/420] Stored 518 points for activity 9101397496
-  [224/420] Stored 336 points for activity 6944542201
-  [225/420] Stored 106 points for activity 9685771777
-  [226/420] Stored 969 points for activity 10882528770
-[rate_limiter] 15-min limit reached. Sleeping 1s...
-  [227/420] Stored 383 points for activity 8803919364
-  [228/420] Stored 2163 points for activity 13855235591
-  [229/420] Stored 492 points for activity 4591939081
-  [230/420] Stored 1970 points for activity 17026268688
-  [231/420] Stored 2050 points for activity 17106626066
-  [232/420] Stored 3627 points for activity 17080800790
-  [233/420] Stored 576 points for activity 5563809306
-  [234/420] Stored 887 points for activity 9113605662
-  [235/420] Stored 2134 points for activity 17037803041
-  [236/420] Stored 611 points for activity 2717734436
-  [237/420] Stored 2552 points for activity 13434398246
-  [238/420] Stored 363 points for activity 8884870697
-  [239/420] Stored 427 points for activity 9144647219
-  [240/420] Stored 2056 points for activity 17219855927
-  [241/420] Stored 1719 points for activity 17534232120
-  [242/420] Stored 5794 points for activity 14808256056
-  [243/420] Stored 1059 points for activity 11642738232
-  [244/420] Stored 1135 points for activity 9868398137
-  [245/420] Stored 1325 points for activity 9956769340
-  [246/420] Stored 387 points for activity 5176520253
-  [247/420] Stored 501 points for activity 4933637691
-  [248/420] Stored 454 points for activity 4258569784
-  [249/420] Stored 1652 points for activity 3937574466
-  [250/420] Stored 483 points for activity 8477795907
-  [251/420] Stored 1809 points for activity 4093331011
-  [252/420] Stored 558 points for activity 11158832712
-  [253/420] Stored 330 points for activity 10863081034
-  [254/420] Stored 1895 points for activity 4217013837
-[rate_limiter] 15-min limit reached. Sleeping 808s...
-  [255/420] Stored 1472 points for activity 4124579407
-[rate_limiter] 15-min limit reached. Sleeping 3s...
-  [256/420] Stored 2543 points for activity 17062012501
-  [257/420] Stored 2158 points for activity 15856328279
-  [258/420] Stored 1150 points for activity 13986023003
-  [259/420] Stored 435 points for activity 7190664801
-  [260/420] Stored 2856 points for activity 16687367779
-  [261/420] Stored 2707 points for activity 14490050149
-[rate_limiter] 15-min limit reached. Sleeping 2s...
-  [262/420] Stored 482 points for activity 13232031334
-  [263/420] Stored 470 points for activity 5269988965
-  [264/420] Stored 2326 points for activity 15102967400
-  [265/420] Stored 729 points for activity 10002656885
-[rate_limiter] 15-min limit reached. Sleeping 1s...
-  [266/420] Stored 571 points for activity 9564311550
-  [267/420] Stored 515 points for activity 6667179638
-  [268/420] Stored 444 points for activity 4605386365
-  [269/420] Stored 315 points for activity 7462004350
-  [270/420] Stored 609 points for activity 9700140676
-  [271/420] Stored 2929 points for activity 15697354383
-  [272/420] Stored 2090 points for activity 15834037904
-  [273/420] Stored 4428 points for activity 343717519No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-
-  [274/420] Stored 504 points for activity 9835781778
-  [275/420] Stored 431 points for activity 8566740629
-[rate_limiter] 15-min limit reached. Sleeping 1s...
-  [276/420] Stored 104 points for activity 7273791127
-  [277/420] Stored 499 points for activity 5723553432
-  [278/420] Stored 740 points for activity 12418041498
-  [279/420] Stored 422 points for activity 7978178202
-  [280/420] Stored 1602 points for activity 3525951130
-[rate_limiter] 15-min limit reached. Sleeping 1s...
-  [281/420] Stored 4017 points for activity 13540062879
-  [282/420] Stored 406 points for activity 9969802913
-  [283/420] Stored 429 points for activity 6234818214
-  [284/420] Stored 4066 points for activity 16044478120
-  [285/420] Stored 907 points for activity 9028310697
-[rate_limiter] 15-min limit reached. Sleeping 42s...
-  [286/420] Stored 706 points for activity 12550659759
-  [287/420] Stored 487 points for activity 6414884528
-  [288/420] Stored 2281 points for activity 13985695412
-  [289/420] Stored 5576 points for activity 14734771893
-  [290/420] Stored 6764 points for activity 13706864309
-  [291/420] Stored 401 points for activity 6142346936
-  [292/420] Stored 654 points for activity 9096537787
-  [293/420] Stored 389 points for activity 4317437629
-  [294/420] Stored 3866 points for activity 15778834111
-  [295/420] Stored 410 points for activity 5812192961
-  [296/420] Stored 1168 points for activity 3892442817
-  [297/420] Stored 2385 points for activity 14253551300
-  [298/420] Stored 447 points for activity 11861401286
-  [299/420] Stored 2548 points for activity 16376272584
-  [300/420] Stored 2148 points for activity 16448446162
-  [301/420] Stored 432 points for activity 11009875669
-  [302/420] Stored 1667 points for activity 3858372310
-  [303/420] Stored 2589 points for activity 14397671133
-  [304/420] Stored 693 points for activity 6132653790
-  [305/420] Stored 5550 points for activity 13964392162
-  [306/420] Stored 1384 points for activity 9912876776
-  [307/420] Stored 562 points for activity 9923684073
-  [308/420] Stored 2735 points for activity 16982361836
-  [309/420] Stored 163 points for activity 4445454062
-  [310/420] Stored 384 points for activity 8083244789
-  [311/420] Stored 395 points for activity 7050626805
-  [312/420] Stored 459 points for activity 12990138103
-  [313/420] Stored 623 points for activity 9314887415
-  [314/420] Stored 722 points for activity 6880999158
-  [315/420] Stored 479 points for activity 8926306042
-  [316/420] Stored 928 points for activity 4002496249
-  [317/420] Stored 574 points for activity 5245021948
-  [318/420] Stored 798 points for activity 6941339409
-  [319/420] Stored 2638 points for activity 17509668626
-  [320/420] Stored 1675 points for activity 3602515732
-  [321/420] Stored 246 points for activity 5948245783
-  [322/420] Stored 182 points for activity 5758168857
-  [323/420] Stored 1666 points for activity 5402969883
-  [324/420] Stored 515 points for activity 9444843292
-  [325/420] Stored 446 points for activity 9016250142
-  [326/420] Stored 330 points for activity 6318556959
-  [327/420] Stored 2099 points for activity 13808398117
-  [328/420] Stored 776 points for activity 4901521190
-  [329/420] Stored 403 points for activity 9271412520
-  [330/420] Stored 488 points for activity 7152793385
-  [331/420] Stored 337 points for activity 11573880618
-  [332/420] Stored 390 points for activity 7219515181
-  [333/420] Stored 432 points for activity 9406756655
-  [334/420] Stored 969 points for activity 4026756912
-  [335/420] Stored 2404 points for activity 14343397171
-  [336/420] Stored 331 points for activity 5357793076
-  [337/420] Stored 933 points for activity 9939027766
-  [338/420] Stored 642 points for activity 11680890680
-  [339/420] Stored 456 points for activity 6554486585
-  [340/420] Stored 359 points for activity 9760444220
-  [341/420] Stored 345 points for activity 8719845182
-  [342/420] Stored 2965 points for activity 13519664959
-  [343/420] Stored 497 points for activity 9899956038
-  [344/420] Stored 3242 points for activity 15201267528
-  [345/420] Stored 5213 points for activity 14305204041
-  [346/420] Stored 332 points for activity 6267262793
-  [347/420] Stored 797 points for activity 8181536587
-  [348/420] Stored 532 points for activity 10897125196
-  [349/420] Stored 381 points for activity 5165334346
-[rate_limiter] 15-min limit reached. Sleeping 807s...
-  [350/420] Stored 911 points for activity 4237264719
-[rate_limiter] 15-min limit reached. Sleeping 3s...
-  [351/420] Stored 442 points for activity 13040256849
-  [stream_fetcher] WARN: failed to fetch streams for 15856412498: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
-[rate_limiter] 15-min limit reached. Sleeping 1s...
-  [353/420] Stored 4757 points for activity 14164715349
-  [354/420] Stored 1854 points for activity 14686332758
-  [355/420] Stored 625 points for activity 10068377431
-  [356/420] Stored 382 points for activity 12394432342
-[rate_limiter] 15-min limit reached. Sleeping 2s...
-  [357/420] Stored 4534 points for activity 14275485529
-  [358/420] Stored 346 points for activity 7936071511
-  [359/420] Stored 656 points for activity 5110239066
-  [360/420] Stored 967 points for activity 16140935005
-  [361/420] Stored 504 points for activity 12157241181
-  [362/420] Stored 3053 points for activity 16761462625
-  [363/420] Stored 1929 points for activity 4189388642
-  [364/420] Stored 2541 points for activity 15628967779
-  [365/420] Stored 299 points for activity 4911664998
-  [366/420] Stored 449 points for activity 8271386475
-  [367/420] Stored 1573 points for activity 4074397548
-  [368/420] Stored 344 points for activity 11961716590
-[rate_limiter] 15-min limit reached. Sleeping 1s...
-  [369/420] Stored 518 points for activity 9757198190
-  [370/420] Stored 403 points for activity 6969206644
-[rate_limiter] 15-min limit reached. Sleeping 1s...
-  [371/420] Stored 343 points for activity 4685768565
-  [372/420] Stored 432 points for activity 5941905278
-  [373/420] Stored 389 points for activity 8821616512
-  [374/420] Stored 331 points for activity 8759265153
-  [375/420] Stored 353 points for activity 4699477893
-[rate_limiter] 15-min limit reached. Sleeping 1s...
-  [376/420] Stored 557 points for activity 7410761606
-  [377/420] Stored 363 points for activity 8402392969
-  [378/420] Stored 426 points for activity 7232923533
-  [379/420] Stored 421 points for activity 5447671693
-[rate_limiter] 15-min limit reached. Sleeping 1s...
-  [380/420] Stored 454 points for activity 6471135120
-[rate_limiter] 15-min limit reached. Sleeping 42s...
-  [381/420] Stored 650 points for activity 12435656593
-  [382/420] Stored 273 points for activity 11605485458
-  [383/420] Stored 331 points for activity 8890085265
-  [384/420] Stored 1120 points for activity 9775939483
-  [385/420] Stored 2188 points for activity 17285494688
-[rate_limiter] 15-min limit reached. Sleeping 1s...
-  [386/420] Stored 2589 points for activity 14541946786
-  [387/420] Stored 627 points for activity 7088105379
-  [388/420] Stored 307 points for activity 7644071844
-  [389/420] Stored 582 points for activity 11920893861
-  [390/420] Stored 3102 points for activity 16304990122
-  [391/420] Stored 2241 points for activity 13919510452
-  [392/420] Stored 440 points for activity 4415731636
-  [393/420] Stored 437 points for activity 9361053622
-  [394/420] Stored 472 points for activity 9058834359
-  [395/420] Stored 292 points for activity 7989186487
-  [396/420] Stored 387 points for activity 6866573239
-  [397/420] Stored 450 points for activity 8533135290
-  [398/420] Stored 2424 points for activity 4198154174
-  [399/420] Stored 704 points for activity 5345869759
-  [400/420] Stored 1159 points for activity 3908001731
-  [401/420] Stored 401 points for activity 8787474376
-  [402/420] Stored 559 points for activity 3489087435
-  [403/420] Stored 362 points for activity 5400530894
-  [404/420] Stored 328 points for activity 8413206480
-  [405/420] Stored 449 points for activity 4812228570
-  [406/420] Stored 501 points for activity 10056751070
-  [407/420] Stored 358 points for activity 7845509086
-  [408/420] Stored 484 points for activity 4407912416
-  [409/420] Stored 2281 points for activity 14119473128No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-
-  [410/420] Stored 377 points for activity 4847415272
-  [411/420] Stored 260 points for activity 4540962795
-  [412/420] Stored 7371 points for activity 13836036078
-  [413/420] Stored 405 points for activity 12359546864
-  [414/420] Stored 359 points for activity 9040803825
-  [415/420] Stored 768 points for activity 5502326772
-  [416/420] Stored 408 points for activity 9667756022
-  [417/420] Stored 395 points for activity 9432553464
-  [418/420] Stored 2259 points for activity 14051264509
-  [419/420] Stored 742 points for activity 13400313854
-  [420/420] Stored 451 points for activity 9388408831
-[stream_fetcher] Done. 416 stored, 0 already present.
-
-[runner] Backfill complete.
-sys:1: ResourceWarning: unclosed <ssl.SSLSocket fd=6, family=2, type=1, proto=0, laddr=('192.168.1.228', 56862), raddr=('172.64.149.246', 443)>
-WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
-WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
-WARNING:py.warnings:/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/stravalib/client.py:1738: FutureWarning: The "resolution" parameter is undocumented in the Strava API. Its use may lead to unexpected behavior or errors in the future.
-  return self._get_streams(
-
-WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
-WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
-WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
-WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
-[runner] Processing 1 user(s).
-
-============================================================
-[runner] User: ben (athlete_id=8909775)
-[runner] Rate limit status: {'15min_used': 0, '15min_remaining': 95, 'day_used': 950, 'day_remaining': 0}
-[activity_fetcher] Loading existing IDs for athlete 8909775...
-[activity_fetcher] 730 activities already in database.
-[rate_limiter] Daily limit reached. Sleeping 20410s...
-[activity_fetcher] Done. 926 fetched, 0 new, 0 already stored.
+[rate_limiter] Daily limit reached. Sleeping 63607s...
+[activity_fetcher] Done. 927 fetched, 0 new, 0 already stored.
 [runner] 4 activities missing stream data.
   [stream_fetcher] WARN: failed to fetch streams for 12612065812: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
   [stream_fetcher] WARN: failed to fetch streams for 14661983365: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
@@ -908,151 +165,4 @@ WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in respons
 [stream_fetcher] Done. 0 stored, 0 already present.
 
 [runner] Backfill complete.
-sys:1: ResourceWarning: unclosed <ssl.SSLSocket fd=6, family=2, type=1, proto=0, laddr=('192.168.1.228', 57057), raddr=('172.64.149.246', 443)>
-WARNING:py.warnings:/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/stravalib/client.py:1738: FutureWarning: The "resolution" parameter is undocumented in the Strava API. Its use may lead to unexpected behavior or errors in the future.
-  return self._get_streams(
-
-WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
-WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
-WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
-WARNING:stravalib.util.limiter.SleepingRateLimitRule:No rates present in response headers
-[runner] Processing 1 user(s).
-
-============================================================
-[runner] User: ben (athlete_id=8909775)
-[runner] Rate limit status: {'15min_used': 0, '15min_remaining': 95, 'day_used': 950, 'day_remaining': 0}
-[activity_fetcher] Loading existing IDs for athlete 8909775...
-[activity_fetcher] 730 activities already in database.
-[rate_limiter] Daily limit reached. Sleeping 13210s...
-[activity_fetcher] Done. 926 fetched, 0 new, 0 already stored.
-[runner] 4 activities missing stream data.
-  [stream_fetcher] WARN: failed to fetch streams for 12612065812: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
-  [stream_fetcher] WARN: failed to fetch streams for 14661983365: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
-  [stream_fetcher] WARN: failed to fetch streams for 10056773067: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
-  [stream_fetcher] WARN: failed to fetch streams for 15856412498: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
-[stream_fetcher] Done. 0 stored, 0 already present.
-
-[runner] Backfill complete.
-sys:1: ResourceWarning: unclosed <ssl.SSLSocket fd=6, family=2, type=1, proto=0, laddr=('192.168.1.228', 57056), raddr=('172.64.149.246', 443)>
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-No rates present in response headers
-[runner] Processing 1 user(s).
-
-============================================================
-[runner] User: ben (athlete_id=8909775)
-[runner] Rate limit status: {'15min_used': 0, '15min_remaining': 95, 'day_used': 515, 'day_remaining': 435}
-[activity_fetcher] Loading existing IDs for athlete 8909775...
-[activity_fetcher] 730 activities already in database.
-[activity_fetcher] Done. 926 fetched, 0 new, 0 already stored.
-[runner] 4 activities missing stream data.
-  [stream_fetcher] WARN: failed to fetch streams for 12612065812: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
-  [stream_fetcher] WARN: failed to fetch streams for 14661983365: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
-  [stream_fetcher] WARN: failed to fetch streams for 10056773067: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
-  [stream_fetcher] WARN: failed to fetch streams for 15856412498: Not Found: Resource Not Found: [{'resource': 'Activity', 'field': '', 'code': 'not found'}]
-[stream_fetcher] Done. 0 stored, 0 already present.
-
-[runner] Backfill complete.
-sys:1: ResourceWarning: unclosed <ssl.SSLSocket fd=6, family=2, type=1, proto=0, laddr=('192.168.1.228', 57507), raddr=('172.64.149.246', 443)>
-[runner] Processing 1 user(s).
-
-============================================================
-[runner] User: ben (athlete_id=8909775)
-[runner] Rate limit status: {'15min_used': 0, '15min_remaining': 95, 'day_used': 550, 'day_remaining': 400}
-[activity_fetcher] Loading existing IDs for athlete 8909775...
-[activity_fetcher] 730 activities already in database.
-[activity_fetcher] Done. 926 fetched, 0 new, 0 already stored.
-Traceback (most recent call last):
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
-    yield
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpx/_transports/default.py", line 250, in handle_request
-    resp = self._pool.handle_request(req)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
-    raise exc from None
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
-    response = connection.handle_request(
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpcore/_sync/connection.py", line 103, in handle_request
-    return self._connection.handle_request(request)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpcore/_sync/http2.py", line 187, in handle_request
-    raise exc
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpcore/_sync/http2.py", line 150, in handle_request
-    status, headers = self._receive_response(
-                      ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpcore/_sync/http2.py", line 294, in _receive_response
-    event = self._receive_stream_event(request, stream_id)
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpcore/_sync/http2.py", line 336, in _receive_stream_event
-    self._receive_events(request, stream_id)
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpcore/_sync/http2.py", line 364, in _receive_events
-    events = self._read_incoming_data(request)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpcore/_sync/http2.py", line 455, in _read_incoming_data
-    raise exc
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpcore/_sync/http2.py", line 443, in _read_incoming_data
-    raise RemoteProtocolError("Server disconnected")
-httpcore.RemoteProtocolError: Server disconnected
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/scripts/backfill.py", line 85, in <module>
-    cli()
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/click/core.py", line 1485, in __call__
-    return self.main(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/click/core.py", line 1406, in main
-    rv = self.invoke(ctx)
-         ^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/click/core.py", line 1873, in invoke
-    return _process_result(sub_ctx.command.invoke(sub_ctx))
-                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/click/core.py", line 1269, in invoke
-    return ctx.invoke(self.callback, **ctx.params)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/click/core.py", line 824, in invoke
-    return callback(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/scripts/backfill.py", line 62, in run
-    _run(user_name=user, after=after, streams_only=streams_only, dry_run=dry_run)
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/strava_pipeline/backfill/runner.py", line 71, in run
-    missing_streams = [aid for aid in all_run_ids if not has_stream(aid)]
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/strava_pipeline/backfill/runner.py", line 71, in <listcomp>
-    missing_streams = [aid for aid in all_run_ids if not has_stream(aid)]
-                                                         ^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/strava_pipeline/db/streams.py", line 23, in has_stream
-    .execute()
-     ^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/postgrest/_sync/request_builder.py", line 47, in execute
-    r = self.request.send()
-        ^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/postgrest/base_request_builder.py", line 82, in send
-    return self.session.request(
-           ^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpx/_client.py", line 825, in request
-    return self.send(request, auth=auth, follow_redirects=follow_redirects)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpx/_client.py", line 914, in send
-    response = self._send_handling_auth(
-               ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpx/_client.py", line 942, in _send_handling_auth
-    response = self._send_handling_redirects(
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
-    response = self._send_single_request(request)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpx/_client.py", line 1014, in _send_single_request
-    response = transport.handle_request(request)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpx/_transports/default.py", line 249, in handle_request
-    with map_httpcore_exceptions():
-  File "/opt/homebrew/Cellar/python@3.11/3.11.15/Frameworks/Python.framework/Versions/3.11/lib/python3.11/contextlib.py", line 158, in __exit__
-    self.gen.throw(typ, value, traceback)
-  File "/Users/benoregan/Documents/NEW VST/strava-pipeline/.venv/lib/python3.11/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
-    raise mapped_exc(message) from exc
-httpx.RemoteProtocolError: Server disconnected
-sys:1: ResourceWarning: unclosed <ssl.SSLSocket fd=6, family=2, type=1, proto=0, laddr=('192.168.1.228', 58557)>
+sys:1: ResourceWarning: unclosed <ssl.SSLSocket fd=6, family=2, type=1, proto=0, laddr=('192.168.1.228', 64338), raddr=('104.18.38.10', 443)>

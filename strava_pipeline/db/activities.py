@@ -97,9 +97,29 @@ def get_athlete_stats(athlete_id: int) -> dict:
     }
 
 
+def upsert_enrichment(strava_id: int, data: dict) -> None:
+    """Update enrichment columns on an existing activity row."""
+    get_client().table("activities").update(data).eq("strava_id", strava_id).execute()
+
+
 def activity_from_stravalib(activity) -> dict:
     """Map a stravalib Activity object to the activities table schema."""
     avg_speed = float(activity.average_speed) if activity.average_speed else None
+
+    # Start location — stravalib may return LatLon namedtuple, list, or None
+    start_lat = start_lng = None
+    latlng = getattr(activity, "start_latlng", None)
+    if latlng is not None:
+        try:
+            if hasattr(latlng, "lat"):
+                start_lat, start_lng = float(latlng.lat), float(latlng.lon)
+            elif hasattr(latlng, "__iter__"):
+                coords = list(latlng)
+                if len(coords) == 2:
+                    start_lat, start_lng = float(coords[0]), float(coords[1])
+        except Exception:
+            pass
+
     return {
         "strava_id": activity.id,
         "athlete_id": activity.athlete.id,
@@ -114,4 +134,6 @@ def activity_from_stravalib(activity) -> dict:
         "total_elevation_gain_m": float(activity.total_elevation_gain) if activity.total_elevation_gain else None,
         "avg_speed_ms": avg_speed,
         "gear_id": activity.gear_id,
+        "start_lat": start_lat,
+        "start_lng": start_lng,
     }

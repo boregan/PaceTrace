@@ -57,6 +57,7 @@ from strava_pipeline.db.activities import (
     get_athlete_stats,
 )
 from strava_pipeline.db.streams import get_stream
+from strava_pipeline.db.wellness import get_latest_wellness, get_wellness_range
 from strava_pipeline.utils.user_loader import get_user_by_name
 
 
@@ -244,6 +245,28 @@ async def list_tools() -> list[Tool]:
                 "required": ["activity_id_1", "activity_id_2"],
             },
         ),
+        Tool(
+            name="get_wellness",
+            description=(
+                "Get daily wellness data synced from Garmin Connect: HRV status, sleep score, "
+                "body battery (energy reserve), stress level, and resting HR. "
+                "Use to understand recovery state, spot fatigue patterns, or contextualise "
+                "why a run felt hard or easy. "
+                "IMPORTANT: Present this data with empathy and context. Sleep and HRV scores "
+                "reflect many factors beyond the athlete's control — young children, shift work, "
+                "travel, illness. Focus on trends over time, not single-night values. "
+                "Frame insights as 'here is what the body was dealing with' not 'you should have "
+                "rested more'. Celebrate what they achieved despite the context."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "user": {"type": "string", "description": "Athlete username", "default": DEFAULT_USER},
+                    "days": {"type": "integer", "description": "Days of history to show (default: 14)", "default": 14},
+                },
+                "required": [],
+            },
+        ),
     ]
 
 
@@ -268,6 +291,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await _get_best_efforts(arguments)
         elif name == "compare_runs":
             result = await _compare_runs(arguments)
+        elif name == "get_wellness":
+            result = await _get_wellness(arguments)
         else:
             result = f"Unknown tool: {name}"
     except Exception as e:
@@ -288,6 +313,45 @@ async def _get_activity(args: dict) -> str:
 
     # Base stream table (existing)
     base = build_context(activity_id, max_points=120, max_hr=MAX_HR)
+
+    # ── Enrichment context block ───────────────────────────────────────────────
+    ctx_lines = []
+
+    # Weather
+    w_temp  = activity.get("weather_temp_c")
+    w_feel  = activity.get("weather_feels_c")
+    w_humid = activity.get("weather_humidity")
+    w_wind  = activity.get("weather_wind_kmh")
+    w_desc  = activity.get("weather_desc")
+    w_prec  = activity.get("weather_precip_mm")
+    if w_desc:
+        feels = f", feels {w_feel:.0f}°C" if w_feel is not None else ""
+        humid = f", {w_humid}% humidity" if w_humid is not None else ""
+        wind  = f", wind {w_wind:.0f} km/h" if w_wind is not None else ""
+        prec  = f", {w_prec:.1f}mm rain" if w_prec and w_prec > 0.1 else ""
+        ctx_lines.append(f"Weather: {w_desc}  {w_temp:.0f}°C{feels}{humid}{wind}{prec}")
+
+    # Air quality
+    aqi      = activity.get("aqi")
+    aqi_desc = activity.get("aqi_desc")
+    if aqi is not None:
+        ctx_lines.append(f"Air quality: AQI {aqi} — {aqi_desc}")
+
+    # Shoe
+    shoe_name = activity.get("shoe_name")
+    shoe_km   = activity.get("shoe_km_at_run")
+    if shoe_name:
+        km_str = f" ({shoe_km:.0f}km on shoe)" if shoe_km else ""
+        ctx_lines.append(f"Shoe: {shoe_name}{km_str}")
+
+    # Daylight
+    phase = activity.get("daylight_phase")
+    if phase:
+        ctx_lines.append(f"Time of day: {phase}")
+
+    if ctx_lines:
+        base = base + "\n\n## Run Context\n" + "\n".join(ctx_lines)
+    # ── End enrichment ────────────────────────────────────────────────────────
 
     stream = get_stream(activity_id)
     if not stream:
@@ -750,6 +814,66 @@ async def _compare_runs(args: dict) -> str:
             lines.append(
                 f"{z:<24}  {str(z1.get(z, 0))+'%':<{col}}  {str(z2.get(z, 0))+'%':<{col}}"
             )
+
+    return "\n".join(lines)
+
+
+async def _get_wellness(args: dict) -> str:
+    user = args.get("user", DEFAULT_USER)
+    days = int(args.get("days", 14))
+
+    athlete_id = _resolve_athlete_id(user)
+    if not athlete_id:
+        return f"User '{user}' not found."
+
+    rows = get_latest_wellness(athlete_id, n=days)
+    if not rows:
+        return (
+            f"No wellness data found for {user}. "
+            f"Run `python scripts/sync_garmin.py --user {user}` to sync from Garmin Connect."
+        )
+
+    lines = [f"## Wellness — {user} (last {len(rows)} days)", ""]
+    lines.append(f"{'Date':<12} {'HRV':>5} {'Status':<12} {'Sleep':>6} {'Battery':>8} {'Stress':>7} {'RHR':>5}")
+    lines.append("─" * 60)
+
+    for r in rows:
+        hrv_val = r.get("hrv_last_night")
+        status  = (r.get("hrv_status") or "").replace("_", " ").title()
+        sleep_s = r.get("sleep_duration_s")
+        sleep_h = f"{sleep_s/3600:.1f}h" if sleep_s else "—"
+        score   = r.get("sleep_score")
+        batt_hi = r.get("body_battery_high")
+        stress  = r.get("stress_avg")
+        rhr     = r.get("resting_hr")
+
+        batt_str   = f"{batt_hi}" if batt_hi is not None else "—"
+        stress_str = f"{stress}" if stress is not None else "—"
+        hrv_str    = f"{hrv_val}" if hrv_val is not None else "—"
+        rhr_str    = f"{rhr}" if rhr is not None else "—"
+        sleep_str  = f"{sleep_h}" + (f" ({score})" if score else "")
+
+        lines.append(
+            f"{r['date']:<12} {hrv_str:>5} {status:<12} {sleep_str:>6} "
+            f"{batt_str:>8} {stress_str:>7} {rhr_str:>5}"
+        )
+
+    # Summary interpretation
+    hrv_vals     = [r["hrv_last_night"] for r in rows if r.get("hrv_last_night")]
+    battery_vals = [r["body_battery_high"] for r in rows if r.get("body_battery_high")]
+    sleep_scores = [r["sleep_score"] for r in rows if r.get("sleep_score")]
+
+    lines.append("")
+    if hrv_vals:
+        avg_hrv = sum(hrv_vals) / len(hrv_vals)
+        trend   = "↑ rising" if hrv_vals[-1] > hrv_vals[0] else "↓ falling" if hrv_vals[-1] < hrv_vals[0] else "→ stable"
+        lines.append(f"HRV avg: {avg_hrv:.0f}ms  trend: {trend}  (higher = better recovered)")
+    if battery_vals:
+        avg_batt = sum(battery_vals) / len(battery_vals)
+        lines.append(f"Body battery avg peak: {avg_batt:.0f}/100  (Garmin's energy reserve metric)")
+    if sleep_scores:
+        avg_sleep = sum(sleep_scores) / len(sleep_scores)
+        lines.append(f"Sleep score avg: {avg_sleep:.0f}/100")
 
     return "\n".join(lines)
 
