@@ -18,12 +18,14 @@ from fastapi import FastAPI
 
 from strava_pipeline.webhook.handlers import router as webhook_router
 from strava_pipeline.api.routes import router as api_router
+from strava_pipeline.web.onboarding import router as onboarding_router
 
 load_dotenv()
 
 app = FastAPI(title="PaceTrace")
 app.include_router(webhook_router)
 app.include_router(api_router)
+app.include_router(onboarding_router)
 
 
 @app.get("/health")

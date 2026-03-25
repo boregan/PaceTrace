@@ -16,9 +16,12 @@ import json
 import os
 import statistics
 import sys
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+_request_user: ContextVar[str] = ContextVar("request_user", default="")
 
 # Allow running from project root
 sys.path.insert(0, str(Path(__file__).parent))
@@ -50,9 +53,29 @@ DEFAULT_USER = os.environ.get("PACETRACE_USER", "ben")
 MAX_HR = int(os.environ.get("PACETRACE_MAX_HR", "185"))
 
 
+def _effective_user(user: str) -> str:
+    """Return user arg, falling back to the per-connection context user."""
+    if user and user != DEFAULT_USER:
+        return user
+    ctx = _request_user.get()
+    return ctx if ctx else user
+
+
 def _resolve_athlete_id(user: str) -> int | None:
+    user = _effective_user(user)
+    # Local flat-file config (dev)
     u = get_user_by_name(user)
-    return int(u["STRAVA_ATHLETE_ID"]) if u else None
+    if u:
+        return int(u["STRAVA_ATHLETE_ID"])
+    # DB tokens (production / self-serve users)
+    try:
+        from strava_pipeline.db.tokens import get_tokens_by_username
+        tokens = get_tokens_by_username(user)
+        if tokens:
+            return int(tokens["athlete_id"])
+    except Exception:
+        pass
+    return None
 
 
 def _fmt_duration(seconds) -> str:
@@ -136,9 +159,9 @@ async def list_tools() -> list[Tool]:
                         "default": DEFAULT_USER,
                     },
                     "n": {
-                        "type": "integer",
+                        "type": "string",
                         "description": "Number of activities to return (default: 5, max: 20)",
-                        "default": 5,
+                        "default": "5",
                     },
                 },
                 "required": [],
@@ -390,18 +413,24 @@ def create_sse_app():
     from starlette.routing import Route, Mount
     from mcp.server.sse import SseServerTransport
 
+    # Full path is /mcp/messages because this app is mounted at /mcp
     sse_transport = SseServerTransport("/mcp/messages")
 
     async def handle_sse(request):
-        async with sse_transport.connect_sse(
-            request.scope, request.receive, request._send
-        ) as streams:
-            await server.run(streams[0], streams[1], server.create_initialization_options())
+        user = request.query_params.get("user", DEFAULT_USER)
+        token = _request_user.set(user)
+        try:
+            async with sse_transport.connect_sse(
+                request.scope, request.receive, request._send
+            ) as streams:
+                await server.run(streams[0], streams[1], server.create_initialization_options())
+        finally:
+            _request_user.reset(token)
 
     return Starlette(
         routes=[
-            Route("/mcp/sse", endpoint=handle_sse),
-            Mount("/mcp/messages", app=sse_transport.handle_post_message),
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages", app=sse_transport.handle_post_message),
         ]
     )
 
