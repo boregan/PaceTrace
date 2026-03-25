@@ -457,7 +457,10 @@ def create_combined_app():
         finally:
             _request_user.reset(token)
 
-    fastapi_app.add_route("/mcp/messages", sse_transport.handle_post_message, methods=["POST"])
+    @fastapi_app.post("/mcp/messages")
+    async def handle_messages(request: Request):
+        await sse_transport.handle_post_message(request.scope, request.receive, request._send)
+
     return fastapi_app
 
 
