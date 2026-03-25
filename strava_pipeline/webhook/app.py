@@ -15,6 +15,7 @@ Start with:
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from strava_pipeline.webhook.handlers import router as webhook_router
 from strava_pipeline.api.routes import router as api_router
@@ -23,6 +24,12 @@ from strava_pipeline.web.onboarding import router as onboarding_router
 load_dotenv()
 
 app = FastAPI(title="PaceTrace")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://claude.ai", "https://www.claude.ai"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 app.include_router(webhook_router)
 app.include_router(api_router)
 app.include_router(onboarding_router)
