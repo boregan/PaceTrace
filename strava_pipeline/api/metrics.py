@@ -339,6 +339,15 @@ def cadence_analysis(cadence_series: list) -> Optional[dict]:
 
     avg = statistics.mean(valid)
     std = statistics.stdev(valid) if len(valid) > 1 else 0.0
+
+    # Strava/Garmin often stores single-leg cadence (one foot's strikes per min).
+    # Real running cadence (both feet) is double this. Detect by threshold:
+    # single-leg values are typically 80-100; full cadence is 150-200.
+    single_leg = avg < 120
+    if single_leg:
+        avg *= 2
+        std *= 2
+
     cv = (std / avg * 100) if avg > 0 else 0.0
 
     if avg >= 178:
