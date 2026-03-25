@@ -7,11 +7,10 @@ Routes:
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import re
 
-import httpx
+import requests
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
@@ -44,7 +43,7 @@ def _unique_username(base: str) -> str:
 
 
 @router.get("/connect", response_class=HTMLResponse)
-async def connect_page():
+def connect_page():
     client_id = os.environ.get("STRAVA_CLIENT_ID", "")
     callback_url = f"{_base_url()}/callback"
     auth_url = (
@@ -82,7 +81,7 @@ async def connect_page():
 
 
 @router.get("/callback", response_class=HTMLResponse)
-async def oauth_callback(code: str = "", error: str = ""):
+def oauth_callback(code: str = "", error: str = ""):
     if error or not code:
         return HTMLResponse(
             f"<h1>Connection failed</h1><p>{error or 'No code returned from Strava.'}</p>",
@@ -92,13 +91,12 @@ async def oauth_callback(code: str = "", error: str = ""):
     client_id = os.environ.get("STRAVA_CLIENT_ID")
     client_secret = os.environ.get("STRAVA_CLIENT_SECRET")
 
-    async with httpx.AsyncClient(http2=False) as http:
-        resp = await http.post(STRAVA_TOKEN_URL, data={
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "code": code,
-            "grant_type": "authorization_code",
-        })
+    resp = requests.post(STRAVA_TOKEN_URL, data={
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+        "grant_type": "authorization_code",
+    })
 
     if resp.status_code != 200:
         return HTMLResponse(
@@ -111,16 +109,12 @@ async def oauth_callback(code: str = "", error: str = ""):
     athlete_id = int(athlete["id"])
     display_name = f"{athlete.get('firstname', '')} {athlete.get('lastname', '')}".strip()
 
-    from strava_pipeline.db.tokens import (
-        upsert_athlete_tokens,
-        get_tokens_by_athlete_id,
-    )
+    from strava_pipeline.db.tokens import upsert_athlete_tokens, get_tokens_by_athlete_id
 
-    existing = await asyncio.to_thread(get_tokens_by_athlete_id, athlete_id)
+    existing = get_tokens_by_athlete_id(athlete_id)
     username = existing["username"] if existing else _unique_username(_slugify(display_name))
 
-    await asyncio.to_thread(
-        upsert_athlete_tokens,
+    upsert_athlete_tokens(
         athlete_id=athlete_id,
         username=username,
         display_name=display_name,
@@ -177,8 +171,7 @@ async def oauth_callback(code: str = "", error: str = ""):
   <p>Try: <em>"What did I run this week?"</em> or <em>"How was my long run on Saturday?"</em></p>
 
   <p class="note">
-    Historical data (up to 1000 activities/day) backfills automatically via a daily job.
-    Your full history will be available within a few days.
+    Historical data backfills automatically. Your full history will be available within a few days.
   </p>
 </body>
 </html>""")
