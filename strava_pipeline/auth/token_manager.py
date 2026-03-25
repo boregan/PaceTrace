@@ -41,6 +41,40 @@ def get_client(user_env_path: str | Path) -> Client:
     return client
 
 
+def get_client_from_db(athlete_id: int) -> Client:
+    """Return an authenticated stravalib Client for a DB-stored user."""
+    from strava_pipeline.db.tokens import get_tokens_by_athlete_id, update_tokens
+
+    tokens = get_tokens_by_athlete_id(athlete_id)
+    if not tokens:
+        raise ValueError(f"No tokens found for athlete_id={athlete_id}")
+
+    client_id = os.environ["STRAVA_CLIENT_ID"]
+    client_secret = os.environ["STRAVA_CLIENT_SECRET"]
+    access_token = tokens["access_token"]
+    refresh_token = tokens["refresh_token"]
+    expires_at = int(tokens["token_expires_at"])
+
+    if time.time() >= expires_at - REFRESH_BUFFER_SECONDS:
+        client = Client()
+        token_response = client.refresh_access_token(
+            client_id=int(client_id),
+            client_secret=client_secret,
+            refresh_token=refresh_token,
+        )
+        access_token = token_response["access_token"]
+        refresh_token = token_response["refresh_token"]
+        expires_at = int(token_response["expires_at"])
+        update_tokens(athlete_id, access_token, refresh_token, expires_at)
+        print(f"[token_manager] Token refreshed for athlete_id={athlete_id}")
+
+    client = Client()
+    client.access_token = access_token
+    client.refresh_token = refresh_token
+    client.token_expires = expires_at
+    return client
+
+
 def _refresh(
     client_id: str,
     client_secret: str,

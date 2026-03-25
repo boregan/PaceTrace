@@ -47,3 +47,9 @@ def update_tokens(athlete_id: int, access_token: str, refresh_token: str, expire
         "refresh_token": refresh_token,
         "token_expires_at": expires_at,
     }).eq("athlete_id", athlete_id).execute()
+
+
+def get_all_athletes() -> list[dict]:
+    db = get_client()
+    resp = db.table("athlete_tokens").select("athlete_id,username,display_name").execute()
+    return resp.data or []

@@ -10,13 +10,39 @@ Orchestrates the full backfill for one or all users.
 import os
 from dotenv import load_dotenv
 
-from strava_pipeline.auth.token_manager import get_client
+from strava_pipeline.auth.token_manager import get_client, get_client_from_db
 from strava_pipeline.backfill.activity_fetcher import fetch_and_store_activities
 from strava_pipeline.backfill.stream_fetcher import fetch_and_store_streams
 from strava_pipeline.db.activities import get_existing_strava_ids
 from strava_pipeline.db.streams import has_stream
 from strava_pipeline.utils.rate_limiter import remaining
 from strava_pipeline.utils.user_loader import get_all_users, get_user_by_name
+
+
+def _load_all_users(user_name: str | None) -> list[dict]:
+    """Load users from flat files + DB, deduplicated by athlete_id."""
+    if user_name:
+        u = get_user_by_name(user_name)
+        return [u] if u else []
+
+    users = get_all_users()
+    seen_ids = {int(u["STRAVA_ATHLETE_ID"]) for u in users}
+
+    try:
+        from strava_pipeline.db.tokens import get_all_athletes
+        for row in get_all_athletes():
+            aid = int(row["athlete_id"])
+            if aid not in seen_ids:
+                users.append({
+                    "_user_name": row["username"],
+                    "_env_path": None,
+                    "STRAVA_ATHLETE_ID": str(aid),
+                })
+                seen_ids.add(aid)
+    except Exception as e:
+        print(f"[runner] Warning: could not load DB users: {e}")
+
+    return users
 
 
 def run(
@@ -36,7 +62,7 @@ def run(
     """
     load_dotenv()  # load STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, SUPABASE_* from .env
 
-    users = [get_user_by_name(user_name)] if user_name else get_all_users()
+    users = _load_all_users(user_name)
     users = [u for u in users if u is not None]
 
     if not users:
@@ -54,7 +80,7 @@ def run(
         print(f"[runner] User: {name} (athlete_id={athlete_id})")
         print(f"[runner] Rate limit status: {remaining()}")
 
-        client = get_client(env_path)
+        client = get_client(env_path) if env_path else get_client_from_db(athlete_id)
 
         if not streams_only:
             new_activity_ids = fetch_and_store_activities(
