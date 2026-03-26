@@ -6,4 +6,3 @@ uvicorn[standard]
 click
 mcp
 httpx
-pycatch22
