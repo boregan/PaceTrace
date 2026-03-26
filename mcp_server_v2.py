@@ -40,6 +40,9 @@ from strava_pipeline.weather.client import get_weather_for_activity, format_weat
 from strava_pipeline.analysis.effort_adjust import (
     adjust_pace, format_adjusted_pace, format_adjusted_pace_detail,
 )
+from strava_pipeline.analysis.similarity import (
+    find_similar, find_similar_by_stream, classify_run, classify_all, detect_anomalies,
+)
 
 
 # ── helpers ─────────────────────────────────────────────────
@@ -446,6 +449,42 @@ async def list_tools():
                     "limit": {"type": "integer", "description": "Max results (default 15)", "default": 15},
                 },
                 "required": ["query"],
+            },
+        ),
+        Tool(
+            name="find_similar_runs",
+            description=(
+                "Find runs with similar patterns to a given run. Uses catch22 time-series "
+                "fingerprints to match pacing shape, HR profile, cadence patterns, and elevation "
+                "profiles across your entire history. Great for: 'find runs like my Sunday long run', "
+                "'which other runs had a similar HR pattern?', 'when did I run a similar course?'. "
+                "Can match on overall similarity or a specific stream (pace, hr, cadence, altitude)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "activity_id": {"type": "string", "description": "Activity ID to find similar runs to"},
+                    "stream": {
+                        "type": "string",
+                        "description": "Match on specific aspect: 'all' (default), 'pace', 'hr', 'cadence', 'altitude'",
+                        "default": "all",
+                    },
+                    "limit": {"type": "integer", "description": "Max results (default 10)", "default": 10},
+                },
+                "required": ["activity_id"],
+            },
+        ),
+        Tool(
+            name="classify_my_runs",
+            description=(
+                "Auto-classify all profiled runs into types (easy, tempo, interval, long, race, "
+                "recovery, fartlek) using pre-computed fingerprints. Shows what percentage of "
+                "training falls into each category, plus detects anomaly runs that don't match "
+                "any typical pattern. Great for training distribution analysis."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
             },
         ),
     ]
@@ -1507,6 +1546,203 @@ async def _query_run_profiles(args: dict) -> str:
     return "\n".join(lines)
 
 
+async def _fetch_all_profiles() -> list[dict]:
+    """Fetch all run profiles from Supabase for the current user."""
+    _, athlete_id = _get_credentials()
+    sb_url = os.environ.get("SUPABASE_URL", "")
+    sb_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not sb_url or not sb_key:
+        return []
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"{sb_url}/rest/v1/run_profiles",
+            params={"athlete_id": f"eq.{athlete_id}", "select": "*"},
+            headers={"apikey": sb_key, "Authorization": f"Bearer {sb_key}"},
+        )
+    return resp.json() if resp.status_code == 200 else []
+
+
+async def _find_similar_runs(args: dict) -> str:
+    """Find runs with similar catch22 fingerprints."""
+    activity_id = args["activity_id"]
+    stream = args.get("stream", "all")
+    limit = args.get("limit", 10)
+
+    profiles = await _fetch_all_profiles()
+    if not profiles:
+        return "No run profiles found. Run the profile computation first."
+
+    # Find target profile
+    target = next((p for p in profiles if p["activity_id"] == activity_id), None)
+    if not target:
+        return f"No profile found for activity {activity_id}. It may not have been profiled yet."
+
+    # Run similarity search
+    if stream == "all":
+        results = find_similar(target, profiles, top_n=limit)
+    else:
+        results = find_similar_by_stream(target, profiles, stream=stream, top_n=limit)
+
+    if not results:
+        return "No similar runs found."
+
+    # Fetch activity names for results
+    activity_names = {}
+    try:
+        async with _client() as c:
+            # Fetch target name
+            try:
+                act = await c.get_activity(activity_id, intervals=False)
+                activity_names[activity_id] = {
+                    "name": act.get("name", "Untitled"),
+                    "date": (act.get("start_date_local") or "")[:10],
+                    "distance": act.get("distance"),
+                    "pace": act.get("average_speed"),
+                }
+            except Exception:
+                pass
+            # Fetch result names
+            for r in results:
+                try:
+                    act = await c.get_activity(r.activity_id, intervals=False)
+                    activity_names[r.activity_id] = {
+                        "name": act.get("name", "Untitled"),
+                        "date": (act.get("start_date_local") or "")[:10],
+                        "distance": act.get("distance"),
+                        "pace": act.get("average_speed"),
+                    }
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Format output
+    target_info = activity_names.get(activity_id, {})
+    target_name = target_info.get("name", activity_id)
+    stream_label = f" (matched on {stream})" if stream != "all" else ""
+
+    lines = [f"# Runs Similar to: {target_name}{stream_label}", ""]
+
+    target_type, target_reason = classify_run(target)
+    lines.append(f"*Target run classified as: **{target_type}** — {target_reason}*")
+    lines.append("")
+
+    for i, r in enumerate(results, 1):
+        info = activity_names.get(r.activity_id, {})
+        dt = info.get("date", "?")
+        name = info.get("name", r.activity_id)
+        dist = fmt_distance(info.get("distance")) if info.get("distance") else ""
+        pace = fmt_pace(info.get("pace")) if info.get("pace") else ""
+
+        # Get this run's profile for classification
+        cand_profile = next((p for p in profiles if p["activity_id"] == r.activity_id), None)
+        run_type = ""
+        if cand_profile:
+            rt, _ = classify_run(cand_profile)
+            run_type = f" [{rt}]"
+
+        sim_pct = f"{r.similarity:.0%}"
+        lines.append(f"**{i}. {dt} — {name}** [{r.activity_id}]{run_type}")
+        lines.append(f"   {sim_pct} similar | {r.match_type} | {dist} @ {pace}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+async def _classify_my_runs(args: dict) -> str:
+    """Auto-classify all profiled runs and show training distribution."""
+    profiles = await _fetch_all_profiles()
+    if not profiles:
+        return "No run profiles found. Run the profile computation first."
+
+    # Classify all runs
+    classified = classify_all(profiles)
+
+    # Count by type
+    from collections import Counter
+    type_counts = Counter(t for t, _, _ in classified)
+    total = len(classified)
+
+    lines = [f"# Training Classification ({total} runs profiled)", ""]
+
+    # Distribution summary
+    lines.append("## Distribution")
+    for run_type in ["easy", "recovery", "tempo", "interval", "fartlek", "race", "mixed"]:
+        count = type_counts.get(run_type, 0)
+        if count == 0:
+            continue
+        pct = (count / total) * 100
+        bar = "█" * int(pct / 2)
+        lines.append(f"- **{run_type.title()}**: {count} runs ({pct:.0f}%) {bar}")
+    lines.append("")
+
+    # Training balance assessment
+    easy_total = type_counts.get("easy", 0) + type_counts.get("recovery", 0)
+    hard_total = type_counts.get("tempo", 0) + type_counts.get("interval", 0) + type_counts.get("race", 0)
+    easy_pct = (easy_total / total * 100) if total else 0
+    hard_pct = (hard_total / total * 100) if total else 0
+
+    lines.append("## Training Balance")
+    lines.append(f"- Easy/Recovery: {easy_pct:.0f}% | Hard (tempo/interval/race): {hard_pct:.0f}%")
+    if easy_pct >= 75:
+        lines.append("- 80/20 rule: well balanced — good easy base")
+    elif easy_pct >= 60:
+        lines.append("- Reasonable balance but could add more easy running")
+    else:
+        lines.append("- Heavy on hard sessions — might benefit from more easy running")
+    lines.append("")
+
+    # Fetch activity names
+    activity_names = {}
+    try:
+        async with _client() as c:
+            for _, p, _ in classified:
+                try:
+                    act = await c.get_activity(p["activity_id"], intervals=False)
+                    activity_names[p["activity_id"]] = {
+                        "name": act.get("name", "Untitled"),
+                        "date": (act.get("start_date_local") or "")[:10],
+                        "distance": act.get("distance"),
+                    }
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Show runs by type
+    for run_type in ["easy", "recovery", "tempo", "interval", "fartlek", "race", "mixed"]:
+        type_runs = [(p, reason) for t, p, reason in classified if t == run_type]
+        if not type_runs:
+            continue
+
+        lines.append(f"## {run_type.title()} Runs ({len(type_runs)})")
+        for p, reason in type_runs:
+            aid = p["activity_id"]
+            info = activity_names.get(aid, {})
+            dt = info.get("date", "?")
+            name = info.get("name", aid)
+            dist = fmt_distance(info.get("distance")) if info.get("distance") else ""
+            lines.append(f"- {dt} — {name} ({dist}) — *{reason}*")
+        lines.append("")
+
+    # Anomaly detection
+    anomalies = detect_anomalies(profiles)
+    if anomalies:
+        lines.append(f"## Unusual Runs ({len(anomalies)})")
+        lines.append("*These runs don't match your typical patterns — could be breakthroughs, experiments, or off days.*")
+        lines.append("")
+        for p, reason in anomalies:
+            aid = p["activity_id"]
+            info = activity_names.get(aid, {})
+            dt = info.get("date", "?")
+            name = info.get("name", aid)
+            lines.append(f"- {dt} — {name} [{aid}] — {reason}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 async def _get_effort_adjusted(args: dict) -> str:
     """Full effort-adjusted pace with weather for a single activity."""
     activity_id = args["activity_id"]
@@ -2088,6 +2324,8 @@ _HANDLERS = {
     "get_effort_adjusted": _get_effort_adjusted,
     "analyse_runs": _analyse_runs,
     "query_run_profiles": _query_run_profiles,
+    "find_similar_runs": _find_similar_runs,
+    "classify_my_runs": _classify_my_runs,
 }
 
 
