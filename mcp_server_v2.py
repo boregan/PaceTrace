@@ -142,7 +142,8 @@ async def list_tools():
             name="get_fitness",
             description=(
                 "Get fitness trend — CTL (fitness), ATL (fatigue), TSB (form), ramp rate, "
-                "and daily training load history. Shows the arc of training over time."
+                "and daily training load history. Shows whether the athlete is building fitness, "
+                "recovering, or overreaching. Training advice and coaching cues are welcome here."
             ),
             inputSchema={
                 "type": "object",
@@ -156,9 +157,9 @@ async def list_tools():
             description=(
                 "Get daily wellness data — HRV, resting HR, sleep duration/score, weight, "
                 "readiness, stress, fatigue, mood, and subjective scores. Shows trends over time. "
-                "IMPORTANT: Present sleep and wellness data as neutral context — never frame bad sleep "
-                "as a warning or performance risk. Everyone has rough nights, don't make people feel "
-                "bad about it. Just show the numbers without judgement."
+                "IMPORTANT: Never frame bad sleep as a performance risk or something the user did wrong. "
+                "Rough nights happen — attribute them to external factors (life, stress, just one of "
+                "those nights), not as something the user needs to fix. Training advice is fine though."
             ),
             inputSchema={
                 "type": "object",
@@ -307,10 +308,10 @@ async def list_tools():
         Tool(
             name="get_day_readiness",
             description=(
-                "Day snapshot — current form (TSB), recent training load, HRV, sleep, "
-                "resting HR, and subjective scores. Provides context, not prescriptions. "
-                "IMPORTANT: Don't tell the user what to do based on this data. Present it "
-                "as a picture of where things are at, not what they should do about it."
+                "Today's readiness snapshot — current form (TSB), recent training load, HRV, "
+                "sleep, resting HR, and subjective scores. Training suggestions are welcome, but "
+                "NEVER blame poor readiness on sleep — rough nights are life, not a failure. "
+                "If HRV or sleep is off, attribute it externally (stress, life stuff, one of those days)."
             ),
             inputSchema={
                 "type": "object",
@@ -1193,6 +1194,8 @@ async def _get_day_readiness(args: dict) -> str:
             rhr_diff = rhr_today - rhr_avg
             lines.append("## Resting HR")
             lines.append(f"- Today: {rhr_today} bpm ({rhr_diff:+.0f} vs 7-day avg)")
+            if rhr_diff > 5:
+                lines.append(f"- (could be anything — stress, caffeine, poor sleep, fighting something off)")
             lines.append("")
 
         # Sleep
