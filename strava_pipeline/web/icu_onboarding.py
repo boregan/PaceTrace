@@ -201,26 +201,32 @@ SUCCESS_HTML = """
     <div class="phase">
         <div class="phase-header">
             <span class="phase-num">+</span>
-            <span class="phase-title">Import your Strava history</span>
+            <span class="phase-title">Import your run history</span>
             <span class="optional">optional</span>
         </div>
         <div class="phase-desc">
-            intervals.icu free tier only syncs going forward. To get your full run history
-            (fitness trends, pace progression, etc), do a quick Strava export:
+            intervals.icu free tier only syncs going forward. To get your full history
+            (fitness trends, pace progression, etc), export from <b>Garmin Connect</b> or <b>Strava</b>
+            and drop the ZIP below.
+        </div>
+
+        <div class="substep">
+            <b>Garmin Connect (recommended)</b> — gives full FIT files with all sensor data
+            (1-sec HR, cadence, stride, power, temperature).<br>
+            Go to <a href="https://www.garmin.com/en-US/account/datamanagement/exportdata/" target="_blank">garmin.com → Account → Data Management → Export Your Data</a>.
+            Request the export — Garmin emails you a ZIP.
         </div>
         <div class="substep">
-            Go to <a href="https://www.strava.com/athlete/delete_your_account" target="_blank">Strava → Settings → "Download or Delete Your Account"</a>
+            <b>Strava</b> — gives GPX files, good enough for pace/HR/distance but less detail.<br>
+            Go to <a href="https://www.strava.com/athlete/delete_your_account" target="_blank">Strava → Settings → "Download or Delete Your Account"</a> → "Request Your Archive".
         </div>
         <div class="substep">
-            Click <b>"Request Your Archive"</b> — Strava emails you a ZIP (takes a few minutes)
-        </div>
-        <div class="substep">
-            Drop the ZIP file below — we'll upload your activities to intervals.icu for you
+            Drop whichever ZIP you get below — we handle both formats.
         </div>
 
         <div class="dropzone" id="dropzone">
             <div class="dropzone-text">
-                <b>Drop your Strava export ZIP here</b><br>
+                <b>Drop your Garmin or Strava export ZIP here</b><br>
                 or click to select
             </div>
             <input type="file" id="file-input" accept=".zip">
@@ -374,11 +380,11 @@ async def connect_submit(
 
 
 @router.post("/v2/upload")
-async def upload_strava_export(
+async def upload_history_export(
     username: str = Form(...),
     file: UploadFile = File(...),
 ):
-    """Accept a Strava export ZIP and upload each activity to intervals.icu."""
+    """Accept a Garmin or Strava export ZIP and upload activities to intervals.icu."""
 
     # Get user's intervals.icu credentials
     user = get_user(username)
@@ -390,9 +396,14 @@ async def upload_strava_export(
 
     api_key = user["icu_api_key"]
 
-    # Read the ZIP into memory
+    # Read the ZIP into memory (limit 500MB)
     try:
         content = await file.read()
+        if len(content) > 500 * 1024 * 1024:
+            return JSONResponse(
+                {"success": False, "error": "File too large (max 500MB). Try splitting it."},
+                status_code=400,
+            )
         zf = zipfile.ZipFile(io.BytesIO(content))
     except Exception as e:
         return JSONResponse(
@@ -400,29 +411,50 @@ async def upload_strava_export(
             status_code=400,
         )
 
+    # Find all activity files — handles both Garmin (nested dirs) and Strava (flat) exports
     activity_files = sorted([n for n in zf.namelist() if _is_activity_file(n)])
 
-    if not activity_files:
+    # Also check for nested ZIPs (Garmin sometimes nests activity ZIPs)
+    nested_zip_data: list[tuple[str, bytes]] = []
+    for name in zf.namelist():
+        if name.lower().endswith(".zip"):
+            try:
+                inner_bytes = zf.read(name)
+                inner_zf = zipfile.ZipFile(io.BytesIO(inner_bytes))
+                for inner_name in inner_zf.namelist():
+                    if _is_activity_file(inner_name):
+                        nested_zip_data.append((
+                            Path(inner_name).name,
+                            inner_zf.read(inner_name),
+                        ))
+                inner_zf.close()
+            except Exception:
+                pass  # Skip corrupt nested ZIPs
+
+    if not activity_files and not nested_zip_data:
         return JSONResponse(
             {"success": False, "error": "No activity files (FIT/GPX/TCX) found in the ZIP"},
             status_code=400,
         )
+
+    total = len(activity_files) + len(nested_zip_data)
 
     # Upload each file to intervals.icu
     uploaded = 0
     skipped = 0
     failed = 0
     log_lines = []
+    idx = 0
 
     async with httpx.AsyncClient(
         base_url="https://intervals.icu/api/v1",
         auth=httpx.BasicAuth("API_KEY", api_key),
         timeout=30.0,
     ) as client:
-        for i, name in enumerate(activity_files):
-            fname = Path(name).name
-            file_bytes = zf.read(name)
 
+        async def _upload(fname: str, file_bytes: bytes):
+            nonlocal uploaded, skipped, failed, idx
+            idx += 1
             try:
                 resp = await client.post(
                     "/athlete/0/activities",
@@ -430,26 +462,33 @@ async def upload_strava_export(
                 )
                 if resp.status_code in (200, 201):
                     uploaded += 1
-                    log_lines.append(f"[{i+1}/{len(activity_files)}] {fname} — uploaded")
+                    log_lines.append(f"[{idx}/{total}] {fname} — uploaded")
                 elif resp.status_code == 409:
                     skipped += 1
-                    log_lines.append(f"[{i+1}/{len(activity_files)}] {fname} — already exists")
+                    log_lines.append(f"[{idx}/{total}] {fname} — already exists")
                 else:
                     failed += 1
-                    log_lines.append(f"[{i+1}/{len(activity_files)}] {fname} — error {resp.status_code}")
+                    log_lines.append(f"[{idx}/{total}] {fname} — error {resp.status_code}")
             except Exception as e:
                 failed += 1
-                log_lines.append(f"[{i+1}/{len(activity_files)}] {fname} — {e}")
+                log_lines.append(f"[{idx}/{total}] {fname} — {e}")
 
-            # Brief pause to be polite to the API
-            if i < len(activity_files) - 1:
-                await asyncio.sleep(0.5)
+            await asyncio.sleep(0.5)
+
+        # Upload from main ZIP
+        for name in activity_files:
+            fname = Path(name).name
+            await _upload(fname, zf.read(name))
+
+        # Upload from nested ZIPs
+        for fname, file_bytes in nested_zip_data:
+            await _upload(fname, file_bytes)
 
     return JSONResponse({
         "success": True,
         "uploaded": uploaded,
         "skipped": skipped,
         "failed": failed,
-        "total": len(activity_files),
+        "total": total,
         "log": "\n".join(log_lines),
     })
