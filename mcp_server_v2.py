@@ -222,7 +222,7 @@ async def list_tools():
                     "types": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Stream types to fetch. Options: heartrate, pace, gap, cadence, altitude, latlng, watts, distance, time. Avoid 'temp' — it's skin temperature, not weather. For actual weather use get_activity.",
+                        "description": "Stream types to fetch. Options: heartrate, velocity_smooth (or 'pace'), cadence, altitude, latlng, watts, distance, time. Avoid 'temp' — it's skin temperature, not weather. For actual weather use get_activity.",
                     },
                 },
                 "required": ["activity_id"],
@@ -858,10 +858,18 @@ async def _get_intervals(args: dict) -> str:
 
 async def _get_streams(args: dict) -> str:
     activity_id = args["activity_id"]
-    types = args.get("types") or ["heartrate", "pace", "gap", "cadence", "altitude", "distance", "time"]
+    requested = args.get("types") or ["heartrate", "velocity_smooth", "cadence", "altitude", "distance", "time"]
+
+    # Map common aliases to valid API stream types
+    TYPE_ALIASES = {"pace": "velocity_smooth", "gap": "velocity_smooth", "speed": "velocity_smooth"}
+    api_types = []
+    for t in requested:
+        mapped = TYPE_ALIASES.get(t, t)
+        if mapped not in api_types:
+            api_types.append(mapped)
 
     async with _client() as c:
-        streams = await c.get_streams(activity_id, types=types)
+        streams = await c.get_streams(activity_id, types=api_types)
 
     if not streams:
         return f"No stream data for activity {activity_id}."
@@ -872,39 +880,45 @@ async def _get_streams(args: dict) -> str:
     stream_map = {s["type"]: s["data"] for s in streams if "data" in s}
     length = max(len(v) for v in stream_map.values()) if stream_map else 0
 
+    # Use display names for velocity_smooth
+    display_cols = []
+    for t in requested:
+        api_t = TYPE_ALIASES.get(t, t)
+        if api_t in stream_map and t not in [d[0] for d in display_cols]:
+            display_cols.append((t, api_t))
+
     lines.append(f"Total data points: {length}")
     lines.append(f"Available streams: {', '.join(stream_map.keys())}")
     lines.append("")
 
+    if not display_cols:
+        return f"Requested stream types not available. Available: {', '.join(stream_map.keys())}"
+
     # Downsample to ~100 points for readability
     step = max(1, length // 100)
 
-    # Build header
-    cols = [t for t in types if t in stream_map]
-    if not cols:
-        return f"Requested stream types not available. Available: {', '.join(stream_map.keys())}"
-
-    header = " | ".join(cols)
+    header = " | ".join(name for name, _ in display_cols)
     lines.append(f"| {header} |")
-    lines.append("|" + "|".join(["---"] * len(cols)) + "|")
+    lines.append("|" + "|".join(["---"] * len(display_cols)) + "|")
 
     for i in range(0, length, step):
         row = []
-        for col in cols:
-            data = stream_map.get(col, [])
+        for display_name, api_name in display_cols:
+            data = stream_map.get(api_name, [])
             if i < len(data):
                 val = data[i]
-                if col == "heartrate":
+                if display_name == "heartrate":
                     row.append(f"{val}")
-                elif col in ("pace", "gap"):
-                    row.append(fmt_pace(1 / val if val and val > 0 else 0))
-                elif col == "cadence":
+                elif display_name in ("pace", "gap", "velocity_smooth"):
+                    # velocity_smooth is m/s — convert to pace
+                    row.append(fmt_pace(val if val and val > 0 else 0))
+                elif display_name == "cadence":
                     row.append(f"{val}")
-                elif col == "altitude":
+                elif display_name == "altitude":
                     row.append(f"{val:.0f}" if val else "")
-                elif col == "distance":
+                elif display_name == "distance":
                     row.append(f"{val / 1000:.2f}" if val else "0")
-                elif col == "time":
+                elif display_name == "time":
                     row.append(fmt_duration(val))
                 else:
                     row.append(str(val) if val is not None else "")
