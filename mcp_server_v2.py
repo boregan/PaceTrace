@@ -389,6 +389,28 @@ async def list_tools():
                 "required": ["activity_id"],
             },
         ),
+        Tool(
+            name="analyse_runs",
+            description=(
+                "Analyse multiple runs to answer questions like 'which runs had stops', "
+                "'my fastest runs', 'runs with most elevation', 'runs where HR was highest'. "
+                "Fetches full data for each run in a date range and filters/sorts by criteria. "
+                "Much more efficient than pulling streams for every run — uses activity-level "
+                "metrics (elapsed vs moving time for stops, avg HR, distance, pace, etc). "
+                "Use this instead of get_streams when analysing patterns across multiple runs."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "Days to look back (default 30)", "default": 30},
+                    "query": {
+                        "type": "string",
+                        "description": "What to find. Options: 'stops' (runs with significant pauses), 'fastest', 'longest', 'hardest' (highest load), 'hilliest', 'highest_hr', 'all' (full summary of every run).",
+                        "default": "all",
+                    },
+                },
+            },
+        ),
     ]
 
 
@@ -1127,6 +1149,150 @@ async def _get_pace_progression(args: dict) -> str:
     return "\n".join(lines)
 
 
+async def _analyse_runs(args: dict) -> str:
+    """Analyse multiple runs — much more efficient than pulling streams for each."""
+    days = args.get("days", 30)
+    query = args.get("query", "all").lower()
+    oldest = date.today() - timedelta(days=days)
+
+    async with _client() as c:
+        activity_list = await c.list_activities(oldest=oldest)
+        # Filter to runs only
+        run_ids = [a["id"] for a in activity_list if _is_run(a) or a.get("source")]
+
+        # Fetch full data for each run (in parallel via asyncio.gather)
+        async def _fetch(aid):
+            try:
+                return await c.get_activity(str(aid))
+            except Exception:
+                return None
+
+        full_runs = await asyncio.gather(*[_fetch(aid) for aid in run_ids])
+
+    runs = [r for r in full_runs if r and _is_run(r)]
+    if not runs:
+        return f"No runs found in the last {days} days."
+
+    runs.sort(key=lambda a: a.get("start_date_local", ""))
+
+    if query == "stops":
+        # Find runs with significant pauses (>30s stopped)
+        lines = [f"# Runs with Stops (last {days} days)", ""]
+        found = []
+        for r in runs:
+            elapsed = r.get("elapsed_time") or 0
+            moving = r.get("moving_time") or 0
+            stopped = elapsed - moving
+            if stopped >= 30:
+                found.append((r, stopped))
+
+        if not found:
+            lines.append("No runs with significant stops found.")
+        else:
+            found.sort(key=lambda x: x[1], reverse=True)
+            lines.append(f"Found {len(found)} runs with pauses:\n")
+            for r, stopped in found:
+                dt = (r.get("start_date_local") or "")[:10]
+                name = r.get("name", "Untitled")
+                dist = fmt_distance(r.get("distance"))
+                pace = fmt_pace(r.get("average_speed"))
+                aid = r.get("id", "")
+                stop_min = stopped / 60
+                lines.append(f"### {dt} — {name} [{aid}]")
+                lines.append(f"  {dist} @ {pace} | **{stop_min:.1f} min stopped** (elapsed {fmt_duration(r.get('elapsed_time'))} vs moving {fmt_duration(r.get('moving_time'))})")
+                lines.append("")
+
+        return "\n".join(lines)
+
+    elif query == "fastest":
+        runs_with_speed = [r for r in runs if r.get("average_speed") and r["average_speed"] > 0]
+        runs_with_speed.sort(key=lambda r: r["average_speed"], reverse=True)
+        lines = [f"# Fastest Runs (last {days} days)", ""]
+        for r in runs_with_speed[:10]:
+            dt = (r.get("start_date_local") or "")[:10]
+            name = r.get("name", "Untitled")
+            dist = fmt_distance(r.get("distance"))
+            pace = fmt_pace(r.get("average_speed"))
+            hr = fmt_hr(r.get("average_heartrate"))
+            aid = r.get("id", "")
+            lines.append(f"- **{pace}** — {dt} {name} [{aid}] ({dist}, {hr})")
+        return "\n".join(lines)
+
+    elif query == "longest":
+        runs_with_dist = [r for r in runs if r.get("distance")]
+        runs_with_dist.sort(key=lambda r: r["distance"], reverse=True)
+        lines = [f"# Longest Runs (last {days} days)", ""]
+        for r in runs_with_dist[:10]:
+            dt = (r.get("start_date_local") or "")[:10]
+            name = r.get("name", "Untitled")
+            dist = fmt_distance(r.get("distance"))
+            pace = fmt_pace(r.get("average_speed"))
+            aid = r.get("id", "")
+            lines.append(f"- **{dist}** — {dt} {name} [{aid}] ({pace})")
+        return "\n".join(lines)
+
+    elif query == "hardest":
+        runs_with_load = [r for r in runs if r.get("icu_training_load")]
+        runs_with_load.sort(key=lambda r: r["icu_training_load"], reverse=True)
+        lines = [f"# Hardest Runs by Training Load (last {days} days)", ""]
+        for r in runs_with_load[:10]:
+            dt = (r.get("start_date_local") or "")[:10]
+            name = r.get("name", "Untitled")
+            load = fmt_load(r.get("icu_training_load"))
+            dist = fmt_distance(r.get("distance"))
+            pace = fmt_pace(r.get("average_speed"))
+            aid = r.get("id", "")
+            lines.append(f"- **Load {load}** — {dt} {name} [{aid}] ({dist} @ {pace})")
+        return "\n".join(lines)
+
+    elif query == "hilliest":
+        runs_with_elev = [r for r in runs if r.get("total_elevation_gain")]
+        runs_with_elev.sort(key=lambda r: r["total_elevation_gain"], reverse=True)
+        lines = [f"# Hilliest Runs (last {days} days)", ""]
+        for r in runs_with_elev[:10]:
+            dt = (r.get("start_date_local") or "")[:10]
+            name = r.get("name", "Untitled")
+            elev = fmt_elevation(r.get("total_elevation_gain"))
+            dist = fmt_distance(r.get("distance"))
+            aid = r.get("id", "")
+            lines.append(f"- **+{elev}** — {dt} {name} [{aid}] ({dist})")
+        return "\n".join(lines)
+
+    elif query == "highest_hr":
+        runs_with_hr = [r for r in runs if r.get("max_heartrate")]
+        runs_with_hr.sort(key=lambda r: r["max_heartrate"], reverse=True)
+        lines = [f"# Highest HR Runs (last {days} days)", ""]
+        for r in runs_with_hr[:10]:
+            dt = (r.get("start_date_local") or "")[:10]
+            name = r.get("name", "Untitled")
+            max_hr = fmt_hr(r.get("max_heartrate"))
+            avg_hr = fmt_hr(r.get("average_heartrate"))
+            dist = fmt_distance(r.get("distance"))
+            aid = r.get("id", "")
+            lines.append(f"- **{max_hr} max** ({avg_hr} avg) — {dt} {name} [{aid}] ({dist})")
+        return "\n".join(lines)
+
+    else:
+        # "all" — full summary
+        lines = [f"# All Runs Summary (last {days} days, {len(runs)} runs)", ""]
+        for r in runs:
+            dt = (r.get("start_date_local") or "")[:10]
+            name = r.get("name", "Untitled")
+            dist = fmt_distance(r.get("distance"))
+            pace = fmt_pace(r.get("average_speed"))
+            hr = fmt_hr(r.get("average_heartrate"))
+            load = fmt_load(r.get("icu_training_load"))
+            elapsed = r.get("elapsed_time") or 0
+            moving = r.get("moving_time") or 0
+            stopped = elapsed - moving
+            aid = r.get("id", "")
+            stop_str = f" | ⏸ {stopped / 60:.0f}min stopped" if stopped >= 30 else ""
+            adj = _effort_adjust(r)
+            adj_str = f" | adj. {adj.adjusted_pace_str}/km" if adj and abs(adj.total_adjustment_secs) >= 3 else ""
+            lines.append(f"- {dt} — {name} [{aid}]: {dist} @ {pace}{adj_str} | {hr} | load {load}{stop_str}")
+        return "\n".join(lines)
+
+
 async def _get_effort_adjusted(args: dict) -> str:
     """Full effort-adjusted pace with weather for a single activity."""
     activity_id = args["activity_id"]
@@ -1706,6 +1872,7 @@ _HANDLERS = {
     "get_training_load": _get_training_load,
     "get_planned_workouts": _get_planned_workouts,
     "get_effort_adjusted": _get_effort_adjusted,
+    "analyse_runs": _analyse_runs,
 }
 
 
