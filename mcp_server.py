@@ -1275,7 +1275,7 @@ def create_combined_app():
     """
     from mcp.server.sse import SseServerTransport
     from starlette.requests import Request
-    from starlette.routing import Mount
+    from starlette.responses import Response
     from strava_pipeline.webhook.app import app as fastapi_app
 
     # ── v1 (Strava) MCP ──
@@ -1294,6 +1294,7 @@ def create_combined_app():
                 await server.run(streams[0], streams[1], server.create_initialization_options())
         finally:
             _request_user.reset(token)
+        return Response()
 
     # Raw ASGI mount — handle_post_message sends its own 202 response
     fastapi_app.mount("/mcp/messages", app=sse_transport.handle_post_message)
@@ -1317,6 +1318,7 @@ def create_combined_app():
                 await v2_server.run(streams[0], streams[1], v2_server.create_initialization_options())
         finally:
             v2_request_user.reset(token)
+        return Response()
 
     # Raw ASGI mount — handle_post_message sends its own 202 response
     fastapi_app.mount("/v2/mcp/messages", app=v2_sse_transport.handle_post_message)
