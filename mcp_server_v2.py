@@ -209,7 +209,11 @@ async def list_tools():
             description=(
                 "Get second-by-second time-series data for a run. Returns HR, pace, GAP, cadence, "
                 "altitude, and GPS data at every recorded point. Use for deep analysis like "
-                "splits, drift patterns, pacing strategy, and elevation impact."
+                "splits, drift patterns, pacing strategy, and elevation impact. "
+                "IMPORTANT: The 'temp' stream is SKIN/WRIST temperature from the watch sensor, "
+                "NOT ambient weather. It reads 18-30°C regardless of outside conditions. "
+                "For actual weather conditions, use get_activity which includes real ambient weather "
+                "from meteorological data. NEVER use the temp stream to discuss weather or explain performance."
             ),
             inputSchema={
                 "type": "object",
@@ -218,7 +222,7 @@ async def list_tools():
                     "types": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Stream types to fetch. Options: heartrate, pace, gap, cadence, altitude, latlng, watts, distance, time, temp. Defaults to key running streams.",
+                        "description": "Stream types to fetch. Options: heartrate, pace, gap, cadence, altitude, latlng, watts, distance, time. Avoid 'temp' — it's skin temperature, not weather. For actual weather use get_activity.",
                     },
                 },
                 "required": ["activity_id"],
@@ -423,9 +427,9 @@ async def _get_activity(args: dict) -> str:
     lines.append(f"**{sport}** — {dt[:10]} at {dt[11:16] if len(dt) > 11 else ''}")
     lines.append("")
 
-    # Weather conditions
+    # Weather conditions (real ambient weather from meteorological data, NOT watch sensor)
     if weather:
-        lines.append("## Conditions")
+        lines.append("## Weather (ambient conditions)")
         lines.append(f"- {format_weather(weather)}")
         lines.append(f"- {weather['running_impact']}")
         lines.append("")
