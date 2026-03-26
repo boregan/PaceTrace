@@ -1265,14 +1265,17 @@ def create_sse_app():
 def create_combined_app():
     """
     Railway deployment: combine webhook FastAPI app with MCP SSE on /mcp/*.
-    Routes registered directly on FastAPI (no sub-app mount) to avoid
-    double-prefix /mcp/mcp/messages bug.
 
     v1 (Strava):        /mcp/sse?user=...    + /mcp/messages
     v2 (intervals.icu): /v2/mcp/sse?user=... + /v2/mcp/messages + /v2/connect
+
+    IMPORTANT: handle_post_message is a raw ASGI app — it sends its own 202
+    response. It MUST be mounted as a Starlette Mount, NOT a FastAPI route,
+    otherwise FastAPI tries to send a second response → RuntimeError.
     """
     from mcp.server.sse import SseServerTransport
     from starlette.requests import Request
+    from starlette.routing import Mount
     from strava_pipeline.webhook.app import app as fastapi_app
 
     # ── v1 (Strava) MCP ──
@@ -1290,9 +1293,8 @@ def create_combined_app():
         finally:
             _request_user.reset(token)
 
-    @fastapi_app.post("/mcp/messages")
-    async def handle_messages(request: Request):
-        await sse_transport.handle_post_message(request.scope, request.receive, request._send)
+    # Mount handle_post_message as raw ASGI (NOT a FastAPI route)
+    fastapi_app.mount("/mcp/messages", app=sse_transport.handle_post_message)
 
     # ── v2 (intervals.icu) MCP ──
     from mcp_server_v2 import server as v2_server, _request_user as v2_request_user, DEFAULT_USER as V2_DEFAULT
@@ -1314,9 +1316,8 @@ def create_combined_app():
         finally:
             v2_request_user.reset(token)
 
-    @fastapi_app.post("/v2/mcp/messages")
-    async def handle_v2_messages(request: Request):
-        await v2_sse_transport.handle_post_message(request.scope, request.receive, request._send)
+    # Mount handle_post_message as raw ASGI (NOT a FastAPI route)
+    fastapi_app.mount("/v2/mcp/messages", app=v2_sse_transport.handle_post_message)
 
     @fastapi_app.get("/v2/health")
     async def v2_health():
