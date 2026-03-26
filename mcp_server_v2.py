@@ -35,6 +35,7 @@ from strava_pipeline.intervals.formatters import (
     interpret_hrv, interpret_sleep, fmt_efficiency,
 )
 from strava_pipeline.db.users import get_user
+from strava_pipeline.weather.client import get_weather_for_activity, format_weather
 
 
 # ── helpers ─────────────────────────────────────────────────
@@ -372,6 +373,7 @@ async def _get_activity(args: dict) -> str:
     activity_id = args["activity_id"]
     async with _client() as c:
         act = await c.get_activity(activity_id, intervals=True)
+        weather = await _get_activity_weather(c, activity_id, act) if act else None
 
     if not act:
         return f"Activity {activity_id} not found."
@@ -383,6 +385,13 @@ async def _get_activity(args: dict) -> str:
     lines.append(f"# {name}")
     lines.append(f"**{sport}** — {dt[:10]} at {dt[11:16] if len(dt) > 11 else ''}")
     lines.append("")
+
+    # Weather conditions
+    if weather:
+        lines.append("## Conditions")
+        lines.append(f"- {format_weather(weather)}")
+        lines.append(f"- {weather['running_impact']}")
+        lines.append("")
 
     # Core metrics
     lines.append("## Summary")
@@ -1008,12 +1017,58 @@ async def _get_pace_progression(args: dict) -> str:
     return "\n".join(lines)
 
 
+async def _get_activity_weather(c, activity_id: str, act: dict) -> dict | None:
+    """Helper: fetch weather for an activity using its latlng stream."""
+    try:
+        streams = await c.get_streams(activity_id, types=["latlng"])
+        lat, lon = None, None
+        if streams and isinstance(streams, list):
+            for s in streams:
+                if isinstance(s, dict) and s.get("type") == "latlng":
+                    data = s.get("data", [])
+                    if data and isinstance(data[0], list) and len(data[0]) == 2:
+                        lat, lon = data[0][0], data[0][1]
+                    break
+            if lat is None and isinstance(streams[0], list) and len(streams[0]) == 2:
+                lat, lon = streams[0][0], streams[0][1]
+        if lat and lon:
+            return await get_weather_for_activity(
+                lat, lon, act.get("start_date_local", ""),
+                act.get("moving_time") or 3600,
+            )
+    except Exception:
+        pass
+    return None
+
+
 async def _compare_runs(args: dict) -> str:
     async with _client() as c:
         a1 = await c.get_activity(args["id1"], intervals=True)
         a2 = await c.get_activity(args["id2"], intervals=True)
+        # Fetch weather for both runs
+        w1 = await _get_activity_weather(c, args["id1"], a1)
+        w2 = await _get_activity_weather(c, args["id2"], a2)
 
     lines = [f"# Run Comparison", ""]
+
+    # Weather context first — this can explain pace differences
+    if w1 or w2:
+        lines.append("## Conditions")
+        if w1:
+            lines.append(f"- **{a1.get('name', 'Run 1')}**: {format_weather(w1)} — {w1['running_impact']}")
+        if w2:
+            lines.append(f"- **{a2.get('name', 'Run 2')}**: {format_weather(w2)} — {w2['running_impact']}")
+
+        # Flag if conditions were very different
+        if w1 and w2:
+            temp_diff = abs(w1["temp_c"] - w2["temp_c"])
+            if temp_diff >= 10:
+                lines.append(f"- ⚡ {temp_diff:.0f}°C temperature difference — pace comparison needs context")
+            elif w1.get("dew_point_c") and w2.get("dew_point_c"):
+                dp_diff = abs(w1["dew_point_c"] - w2["dew_point_c"])
+                if dp_diff >= 8:
+                    lines.append(f"- ⚡ Very different humidity conditions — pace comparison needs context")
+        lines.append("")
 
     def _col(a):
         return {
