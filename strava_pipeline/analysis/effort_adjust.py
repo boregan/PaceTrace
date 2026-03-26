@@ -258,13 +258,34 @@ def adjust_pace(
     heat_pct = _heat_adjustment_pct(temp_c, dew_point_c, humidity_pct)
 
     # For elevation: if GAP is available, use the difference between
-    # actual pace and GAP as the elevation adjustment instead
+    # actual pace and GAP as the elevation adjustment — BUT only if
+    # the GAP difference is proportionate to actual elevation.
+    # For interval sessions, GAP can diverge wildly from average speed
+    # due to mixed intensities, giving false "elevation" adjustments.
+    use_gap = False
+    elev_secs = 0.0
     if gap_speed_ms and gap_speed_ms > 0:
         gap_pace_secs_km = 1000.0 / gap_speed_ms
-        # GAP faster than actual = uphill run (positive adjustment)
-        elev_secs = raw_pace_secs_km - gap_pace_secs_km
-        elev_pct = (elev_secs / raw_pace_secs_km) * 100
-    else:
+        gap_diff = raw_pace_secs_km - gap_pace_secs_km
+
+        # Sanity check: compare GAP-based adjustment to what gradient predicts
+        gradient_pct = _elevation_adjustment_pct(elevation_gain_m, distance_m)
+        gradient_secs = raw_pace_secs_km * (gradient_pct / 100) if gradient_pct else 0
+
+        # If GAP says >3x what gradient predicts, GAP is likely polluted
+        # by intensity variation (intervals, fartleks) — use gradient instead
+        if gradient_secs > 0 and abs(gap_diff) > gradient_secs * 3:
+            use_gap = False
+        elif abs(gap_diff) > 30 and (not elevation_gain_m or not distance_m
+                                      or (elevation_gain_m / distance_m) < 0.01):
+            # GAP says >30s/km adjustment but grade is <1% — suspicious
+            use_gap = False
+        else:
+            use_gap = True
+            elev_secs = gap_diff
+            elev_pct = (elev_secs / raw_pace_secs_km) * 100
+
+    if not use_gap:
         elev_pct = _elevation_adjustment_pct(elevation_gain_m, distance_m)
 
     tsb = (ctl - atl) if (ctl is not None and atl is not None) else None
@@ -275,7 +296,7 @@ def adjust_pace(
 
     # Convert percentages to seconds/km
     heat_secs = raw_pace_secs_km * (heat_pct / 100)
-    elev_secs_adj = raw_pace_secs_km * (elev_pct / 100) if not gap_speed_ms else elev_secs
+    elev_secs_adj = elev_secs if use_gap else raw_pace_secs_km * (elev_pct / 100)
     fatigue_secs = raw_pace_secs_km * (fatigue_pct / 100)
     total_secs = heat_secs + elev_secs_adj + fatigue_secs
 
