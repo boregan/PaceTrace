@@ -411,6 +411,42 @@ async def list_tools():
                 },
             },
         ),
+        Tool(
+            name="query_run_profiles",
+            description=(
+                "Query pre-computed run fingerprints across entire history. Each run has been "
+                "analysed for: pacing pattern (negative split, fade, consistency score), HR drift, "
+                "stops, elevation profile, intensity distribution, and 88 catch22 shape features. "
+                "Use this for questions like 'which runs did I negative split?', 'my most consistent runs', "
+                "'runs where I faded badly', 'when do I typically stop?', 'runs with high HR drift', "
+                "'find runs with similar pacing to X'. Much faster than streaming raw data — instant results "
+                "across hundreds of runs."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "What to find. Options: "
+                            "'negative_splits' — runs where 2nd half was faster, "
+                            "'positive_splits' — runs where runner faded, "
+                            "'most_consistent' — best even pacing, "
+                            "'least_consistent' — most erratic pacing, "
+                            "'stops' — runs with pauses, "
+                            "'hr_drift' — highest HR drift runs, "
+                            "'steady_hr' — most stable HR runs, "
+                            "'hilly' — hilly/mountainous runs, "
+                            "'flat' — flat runs, "
+                            "'fastest_1k' — best 1km segments, "
+                            "'all' — summary of every profiled run"
+                        ),
+                    },
+                    "limit": {"type": "integer", "description": "Max results (default 15)", "default": 15},
+                },
+                "required": ["query"],
+            },
+        ),
     ]
 
 
@@ -1293,6 +1329,183 @@ async def _analyse_runs(args: dict) -> str:
         return "\n".join(lines)
 
 
+async def _query_run_profiles(args: dict) -> str:
+    """Query pre-computed run profiles from the database."""
+    query = args.get("query", "all").lower()
+    limit = args.get("limit", 15)
+
+    # Get athlete ID for current user
+    _, athlete_id = _get_credentials()
+
+    sb_url = os.environ.get("SUPABASE_URL", "")
+    sb_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
+    if not sb_url or not sb_key:
+        return "Database not configured. Cannot query run profiles."
+
+    headers = {"apikey": sb_key, "Authorization": f"Bearer {sb_key}"}
+
+    # Build query params based on what we're looking for
+    params: dict = {
+        "athlete_id": f"eq.{athlete_id}",
+        "select": "*",
+        "limit": str(limit),
+    }
+
+    if query == "negative_splits":
+        params["negative_split_ratio"] = "lt.0.97"
+        params["order"] = "negative_split_ratio.asc"
+    elif query == "positive_splits":
+        params["fade_index"] = "gt.1.05"
+        params["order"] = "fade_index.desc"
+    elif query == "most_consistent":
+        params["pace_cv"] = "not.is.null"
+        params["order"] = "pace_cv.asc"
+    elif query == "least_consistent":
+        params["pace_cv"] = "not.is.null"
+        params["order"] = "pace_cv.desc"
+    elif query == "stops":
+        params["stop_count"] = "gt.0"
+        params["order"] = "total_stopped_secs.desc"
+    elif query == "hr_drift":
+        params["hr_drift_pct"] = "not.is.null"
+        params["order"] = "hr_drift_pct.desc"
+    elif query == "steady_hr":
+        params["hr_cv"] = "not.is.null"
+        params["order"] = "hr_cv.asc"
+    elif query == "hilly":
+        params["elevation_profile"] = "in.(hilly,mountainous)"
+        params["order"] = "climb_score.desc"
+    elif query == "flat":
+        params["elevation_profile"] = "eq.flat"
+        params["order"] = "pace_cv.asc"
+    elif query == "fastest_1k":
+        params["best_1k_pace_secs"] = "not.is.null"
+        params["order"] = "best_1k_pace_secs.asc"
+    else:  # "all"
+        params["order"] = "activity_id.desc"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(f"{sb_url}/rest/v1/run_profiles", params=params, headers=headers)
+
+    if resp.status_code != 200:
+        return f"Error querying profiles: {resp.text[:200]}"
+
+    profiles = resp.json()
+    if not profiles:
+        return f"No profiled runs found matching '{query}'. Run the profile computation first."
+
+    # Also fetch activity names for these IDs
+    activity_ids = [p["activity_id"] for p in profiles]
+    activity_names = {}
+    try:
+        _, athlete_id = _get_credentials()
+        async with _client() as c:
+            for aid in activity_ids[:limit]:
+                try:
+                    act = await c.get_activity(aid, intervals=False)
+                    dt = (act.get("start_date_local") or "")[:10]
+                    name = act.get("name", "Untitled")
+                    dist = act.get("distance", 0)
+                    pace = act.get("average_speed")
+                    activity_names[aid] = {"date": dt, "name": name, "distance": dist, "pace": pace}
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Format results based on query type
+    title_map = {
+        "negative_splits": "Negative Split Runs",
+        "positive_splits": "Runs Where You Faded",
+        "most_consistent": "Most Consistent Pacing",
+        "least_consistent": "Most Erratic Pacing",
+        "stops": "Runs with Stops",
+        "hr_drift": "Highest HR Drift",
+        "steady_hr": "Steadiest HR",
+        "hilly": "Hilly Runs",
+        "flat": "Flat Runs",
+        "fastest_1k": "Fastest 1K Segments",
+        "all": "All Profiled Runs",
+    }
+    title = title_map.get(query, f"Run Profiles: {query}")
+    lines = [f"# {title} ({len(profiles)} results)", ""]
+
+    for p in profiles:
+        aid = p["activity_id"]
+        info = activity_names.get(aid, {})
+        dt = info.get("date", "?")
+        name = info.get("name", aid)
+        dist = fmt_distance(info.get("distance")) if info.get("distance") else ""
+        pace = fmt_pace(info.get("pace")) if info.get("pace") else ""
+
+        header = f"### {dt} — {name} [{aid}]"
+        if dist:
+            header += f" ({dist} @ {pace})"
+        lines.append(header)
+
+        # Show relevant metrics based on query
+        details = []
+
+        if query in ("negative_splits", "positive_splits", "most_consistent", "least_consistent", "all"):
+            if p.get("negative_split_ratio") is not None:
+                ratio = p["negative_split_ratio"]
+                if ratio < 0.97:
+                    details.append(f"Negative split (ratio {ratio:.3f})")
+                elif ratio > 1.05:
+                    details.append(f"Positive split — faded (ratio {ratio:.3f})")
+                else:
+                    details.append(f"Even pacing (ratio {ratio:.3f})")
+            if p.get("even_pace_score") is not None:
+                details.append(f"Consistency: {p['even_pace_score']:.0f}/100")
+            if p.get("fade_index") is not None:
+                details.append(f"Fade index: {p['fade_index']:.3f}")
+
+        if query in ("stops", "all"):
+            if p.get("stop_count", 0) > 0:
+                details.append(f"{p['stop_count']} stops ({p.get('total_stopped_secs', 0):.0f}s total)")
+
+        if query in ("hr_drift", "steady_hr", "all"):
+            if p.get("hr_drift_pct") is not None:
+                details.append(f"HR drift: {p['hr_drift_pct']:+.1f}%")
+            if p.get("hr_cv") is not None:
+                details.append(f"HR consistency (CV): {p['hr_cv']:.4f}")
+
+        if query in ("hilly", "flat", "all"):
+            if p.get("elevation_profile"):
+                details.append(f"Profile: {p['elevation_profile']}")
+            if p.get("climb_score") is not None:
+                details.append(f"Climb: {p['climb_score']:.1f}m/km")
+
+        if query == "fastest_1k":
+            if p.get("best_1k_pace_secs") is not None:
+                m, s = divmod(int(p["best_1k_pace_secs"]), 60)
+                details.append(f"Best 1K: {m}:{s:02d} /km")
+
+        if p.get("intensity_distribution"):
+            details.append(f"Intensity: {p['intensity_distribution']}")
+
+        if p.get("hr_above_90pct_secs") and p["hr_above_90pct_secs"] > 30:
+            details.append(f"Time above 90% max HR: {fmt_duration(p['hr_above_90pct_secs'])}")
+
+        # Per-km splits if available
+        if query in ("negative_splits", "positive_splits", "most_consistent", "least_consistent"):
+            splits = p.get("km_splits", [])
+            if splits and isinstance(splits, list):
+                split_strs = []
+                for i, s in enumerate(splits):
+                    m, sec = divmod(int(s), 60)
+                    split_strs.append(f"K{i+1}: {m}:{sec:02d}")
+                if len(split_strs) <= 15:
+                    details.append(f"Splits: {' | '.join(split_strs)}")
+
+        for d in details:
+            lines.append(f"  - {d}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 async def _get_effort_adjusted(args: dict) -> str:
     """Full effort-adjusted pace with weather for a single activity."""
     activity_id = args["activity_id"]
@@ -1873,6 +2086,7 @@ _HANDLERS = {
     "get_planned_workouts": _get_planned_workouts,
     "get_effort_adjusted": _get_effort_adjusted,
     "analyse_runs": _analyse_runs,
+    "query_run_profiles": _query_run_profiles,
 }
 
 
