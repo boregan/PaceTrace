@@ -96,74 +96,61 @@ def fmt_decoupling(value: float | None) -> str:
 
 
 def fmt_tsb(ctl: float | None, atl: float | None) -> str:
-    """Interpret TSB (form = CTL - ATL)."""
+    """TSB (form = CTL - ATL). Descriptive labels, not prescriptive."""
     if ctl is None or atl is None:
         return "—"
     tsb = ctl - atl
     if tsb > 15:
-        status = "very fresh / detrained risk"
+        status = "very fresh"
     elif tsb > 5:
-        status = "fresh — good for race/hard session"
+        status = "fresh"
     elif tsb > -10:
-        status = "neutral — productive training"
+        status = "balanced"
     elif tsb > -20:
-        status = "fatigued — absorbing load"
+        status = "carrying fatigue"
     else:
-        status = "very fatigued — rest soon"
+        status = "deep fatigue"
     return f"TSB {tsb:+.0f} ({status})"
 
 
 def fmt_ramp_rate(rate: float | None) -> str:
-    """Interpret fitness ramp rate."""
+    """Fitness ramp rate — just context, not warnings."""
     if rate is None:
         return "—"
     if rate > 8:
-        label = "aggressive — injury risk"
+        label = "steep ramp"
     elif rate > 5:
-        label = "high — monitor closely"
+        label = "fast build"
     elif rate > 2:
-        label = "good progression"
+        label = "steady build"
     elif rate > 0:
         label = "maintenance"
     elif rate > -2:
-        label = "slight detraining"
+        label = "easing off"
     else:
-        label = "significant detraining"
+        label = "winding down"
     return f"{rate:+.1f} CTL/week ({label})"
 
 
 def interpret_hrv(hrv: float | None, hrv_avg_7d: float | None = None) -> str:
-    """Interpret HRV value with optional 7-day baseline."""
+    """HRV value with optional 7-day baseline comparison. No judgement — just numbers."""
     if hrv is None:
         return "—"
     text = f"{hrv:.0f} ms"
     if hrv_avg_7d and hrv_avg_7d > 0:
         pct_diff = ((hrv - hrv_avg_7d) / hrv_avg_7d) * 100
-        if pct_diff < -15:
-            text += f" (⚠️ {pct_diff:+.0f}% vs 7-day avg — consider easy day)"
-        elif pct_diff < -5:
-            text += f" ({pct_diff:+.0f}% vs 7-day avg — slightly low)"
-        elif pct_diff > 10:
-            text += f" ({pct_diff:+.0f}% vs 7-day avg — well recovered)"
-        else:
-            text += f" ({pct_diff:+.0f}% vs 7-day avg — normal)"
+        text += f" ({pct_diff:+.0f}% vs 7-day avg)"
     return text
 
 
 def interpret_sleep(sleep_secs: int | None, sleep_score: float | None = None) -> str:
-    """Interpret sleep duration with optional score."""
+    """Sleep duration with optional score. Just the facts, no judgement."""
     if not sleep_secs:
         return "—"
     hours = sleep_secs / 3600
     text = f"{hours:.1f}h"
     if sleep_score:
         text += f" (score: {sleep_score:.0f}/100)"
-    if hours < 6:
-        text += " — limited"
-    elif hours < 7:
-        text += " — could be more"
-    elif hours >= 8:
-        text += " — great"
     return text
 
 

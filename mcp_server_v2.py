@@ -142,8 +142,7 @@ async def list_tools():
             name="get_fitness",
             description=(
                 "Get fitness trend — CTL (fitness), ATL (fatigue), TSB (form), ramp rate, "
-                "and daily training load history. Shows whether the athlete is building fitness, "
-                "recovering, or at risk of overtraining."
+                "and daily training load history. Shows the arc of training over time."
             ),
             inputSchema={
                 "type": "object",
@@ -157,8 +156,9 @@ async def list_tools():
             description=(
                 "Get daily wellness data — HRV, resting HR, sleep duration/score, weight, "
                 "readiness, stress, fatigue, mood, and subjective scores. Shows trends over time. "
-                "Use this to understand recovery status and readiness to train. "
-                "Be empathetic and supportive when discussing wellness — everyone's life context is different."
+                "IMPORTANT: Present sleep and wellness data as neutral context — never frame bad sleep "
+                "as a warning or performance risk. Everyone has rough nights, don't make people feel "
+                "bad about it. Just show the numbers without judgement."
             ),
             inputSchema={
                 "type": "object",
@@ -307,10 +307,10 @@ async def list_tools():
         Tool(
             name="get_day_readiness",
             description=(
-                "Today's readiness assessment — combines current form (TSB), yesterday's "
-                "training load, HRV trend, sleep, resting HR, and subjective scores into "
-                "a holistic view of whether to train hard, easy, or rest today. "
-                "Be empathetic — life stress, family commitments, and work pressure all matter."
+                "Day snapshot — current form (TSB), recent training load, HRV, sleep, "
+                "resting HR, and subjective scores. Provides context, not prescriptions. "
+                "IMPORTANT: Don't tell the user what to do based on this data. Present it "
+                "as a picture of where things are at, not what they should do about it."
             ),
             inputSchema={
                 "type": "object",
@@ -1165,7 +1165,6 @@ async def _get_day_readiness(args: dict) -> str:
 
     if not today_data:
         lines.append("No wellness data recorded for this day yet.")
-        lines.append("Consider logging: sleep, HRV, how you feel (fatigue/soreness/mood).")
     else:
         # Form
         ctl = today_data.get("ctl")
@@ -1192,9 +1191,8 @@ async def _get_day_readiness(args: dict) -> str:
         if rhr_today and rhr_values:
             rhr_avg = sum(rhr_values) / len(rhr_values)
             rhr_diff = rhr_today - rhr_avg
-            status = "normal" if abs(rhr_diff) < 3 else ("elevated — possible fatigue" if rhr_diff > 0 else "low — well rested")
             lines.append("## Resting HR")
-            lines.append(f"- Today: {rhr_today} bpm ({rhr_diff:+.0f} vs 7-day avg, {status})")
+            lines.append(f"- Today: {rhr_today} bpm ({rhr_diff:+.0f} vs 7-day avg)")
             lines.append("")
 
         # Sleep
