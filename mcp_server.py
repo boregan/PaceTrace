@@ -1279,7 +1279,9 @@ def create_combined_app():
     from strava_pipeline.webhook.app import app as fastapi_app
 
     # ── v1 (Strava) MCP ──
-    sse_transport = SseServerTransport("/mcp/messages")
+    # Trailing slash in path: SseServerTransport tells clients to POST to
+    # /mcp/messages/ which Mount matches without a 307 redirect.
+    sse_transport = SseServerTransport("/mcp/messages/")
 
     @fastapi_app.get("/mcp/sse")
     async def handle_sse(request: Request):
@@ -1293,7 +1295,7 @@ def create_combined_app():
         finally:
             _request_user.reset(token)
 
-    # Mount handle_post_message as raw ASGI (NOT a FastAPI route)
+    # Raw ASGI mount — handle_post_message sends its own 202 response
     fastapi_app.mount("/mcp/messages", app=sse_transport.handle_post_message)
 
     # ── v2 (intervals.icu) MCP ──
@@ -1302,7 +1304,7 @@ def create_combined_app():
 
     fastapi_app.include_router(icu_router)
 
-    v2_sse_transport = SseServerTransport("/v2/mcp/messages")
+    v2_sse_transport = SseServerTransport("/v2/mcp/messages/")
 
     @fastapi_app.get("/v2/mcp/sse")
     async def handle_v2_sse(request: Request):
@@ -1316,7 +1318,7 @@ def create_combined_app():
         finally:
             v2_request_user.reset(token)
 
-    # Mount handle_post_message as raw ASGI (NOT a FastAPI route)
+    # Raw ASGI mount — handle_post_message sends its own 202 response
     fastapi_app.mount("/v2/mcp/messages", app=v2_sse_transport.handle_post_message)
 
     @fastapi_app.get("/v2/health")
