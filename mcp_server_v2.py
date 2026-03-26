@@ -36,6 +36,9 @@ from strava_pipeline.intervals.formatters import (
 )
 from strava_pipeline.db.users import get_user
 from strava_pipeline.weather.client import get_weather_for_activity, format_weather
+from strava_pipeline.analysis.effort_adjust import (
+    adjust_pace, format_adjusted_pace, format_adjusted_pace_detail,
+)
 
 
 # ── helpers ─────────────────────────────────────────────────
@@ -89,6 +92,21 @@ def _is_run(activity: dict) -> bool:
     return t in ("run", "trailrun", "virtualrun")
 
 
+def _effort_adjust(act: dict, weather: dict | None = None):
+    """Compute effort-adjusted pace for an activity."""
+    return adjust_pace(
+        speed_ms=act.get("average_speed"),
+        temp_c=weather.get("temp_c") if weather else None,
+        dew_point_c=weather.get("dew_point_c") if weather else None,
+        humidity_pct=weather.get("humidity_pct") if weather else None,
+        elevation_gain_m=act.get("total_elevation_gain"),
+        distance_m=act.get("distance") or act.get("icu_distance"),
+        gap_speed_ms=act.get("gap"),
+        ctl=act.get("icu_ctl"),
+        atl=act.get("icu_atl"),
+    )
+
+
 # ── MCP server ──────────────────────────────────────────────
 
 server = Server("pacetrace-v2")
@@ -100,9 +118,11 @@ async def list_tools():
         Tool(
             name="get_activity",
             description=(
-                "Get comprehensive details for a single run including pace, GAP, HR zones, "
-                "auto-detected intervals, efficiency factor, aerobic decoupling, training load, "
-                "gear/shoes, and elevation. The activity_id is the intervals.icu ID (e.g. 'i12345678')."
+                "Get comprehensive details for a single run including pace, GAP, effort-adjusted pace, "
+                "weather conditions, HR zones, auto-detected intervals, efficiency factor, aerobic decoupling, "
+                "training load, gear/shoes, and elevation. Effort-adjusted pace normalizes for heat/humidity, "
+                "elevation, and fatigue to show what the run equals in ideal conditions. "
+                "The activity_id is the intervals.icu ID (e.g. 'i12345678')."
             ),
             inputSchema={
                 "type": "object",
@@ -348,6 +368,23 @@ async def list_tools():
                 },
             },
         ),
+        Tool(
+            name="get_effort_adjusted",
+            description=(
+                "Get the effort-adjusted pace for a specific run. Normalizes the actual pace "
+                "for weather (temperature, humidity, dew point), elevation, and fatigue (TSB) "
+                "to show what the run is equivalent to in ideal conditions (10°C, flat, fresh). "
+                "This is the 'honest' pace — use it to compare runs across different conditions. "
+                "Example: '5:30/km in 28°C and 80% humidity = 5:05/km in ideal conditions'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "activity_id": {"type": "string", "description": "The activity ID"},
+                },
+                "required": ["activity_id"],
+            },
+        ),
     ]
 
 
@@ -393,6 +430,9 @@ async def _get_activity(args: dict) -> str:
         lines.append(f"- {weather['running_impact']}")
         lines.append("")
 
+    # Effort-adjusted pace
+    adj = _effort_adjust(act, weather)
+
     # Core metrics
     lines.append("## Summary")
     lines.append(f"- Distance: {fmt_distance(act.get('distance') or act.get('icu_distance'))}")
@@ -401,11 +441,21 @@ async def _get_activity(args: dict) -> str:
     gap = act.get("gap")
     if gap:
         lines.append(f"- GAP: {fmt_pace(gap)}")
+    if adj and abs(adj.total_adjustment_secs) >= 2:
+        lines.append(f"- **Effort-Adjusted Pace: {adj.adjusted_pace_str} /km**")
     lines.append(f"- HR: {fmt_hr(act.get('average_heartrate'))} avg / {fmt_hr(act.get('max_heartrate'))} max")
     lines.append(f"- Cadence: {fmt_cadence(act.get('average_cadence'))}")
     if act.get("average_stride"):
         lines.append(f"- Stride: {act['average_stride']:.2f}m")
     lines.append(f"- Elevation: +{fmt_elevation(act.get('total_elevation_gain'))} / -{fmt_elevation(act.get('total_elevation_loss'))}")
+
+    # Effort adjustment detail
+    if adj and abs(adj.total_adjustment_secs) >= 2:
+        lines.append("")
+        lines.append("## Effort-Adjusted Pace")
+        lines.append(f"- {adj.summary()}")
+        lines.append(f"- Adjustments applied ({adj.conditions_summary}):")
+        lines.append(adj.breakdown())
 
     # Training metrics
     lines.append("")
@@ -494,8 +544,17 @@ async def _get_recent(args: dict) -> str:
         gear_name = (a.get("gear") or {}).get("name", "")
         aid = a.get("id", "")
 
+        # Effort-adjusted pace (elevation + fatigue, no weather API call for list)
+        adj = _effort_adjust(a)
+        adj_str = ""
+        if adj and abs(adj.total_adjustment_secs) >= 3:
+            adj_str = f"adj. {adj.adjusted_pace_str} /km"
+
         lines.append(f"### {dt} — {name} [{aid}]")
-        parts = [dist, dur, f"pace {pace}", hr, f"load {load}"]
+        parts = [dist, dur, f"pace {pace}"]
+        if adj_str:
+            parts.append(adj_str)
+        parts.extend([hr, f"load {load}"])
         if tsb:
             parts.append(tsb)
         if gear_name:
@@ -977,17 +1036,30 @@ async def _get_pace_progression(args: dict) -> str:
 
         lines.append(f"## {cat_name} ({len(cat_runs)} runs)")
         lines.append("")
-        lines.append("| Date | Name | Distance | Pace | HR |")
-        lines.append("|------|------|----------|------|----|")
+        lines.append("| Date | Name | Distance | Pace | Adj. Pace | HR |")
+        lines.append("|------|------|----------|------|-----------|-----|")
 
         speeds = []
+        adj_speeds = []
         for r in cat_runs:
             dt_str = (r.get("start_date_local") or "")[:10]
             name = r.get("name", "Untitled")
             dist = fmt_distance(r.get("distance"))
             pace = fmt_pace(r.get("average_speed"))
             hr = fmt_hr(r.get("average_heartrate"))
-            lines.append(f"| {dt_str} | {name} | {dist} | {pace} | {hr} |")
+
+            # Effort-adjust using elevation + fatigue (no weather API call for bulk)
+            adj = _effort_adjust(r)
+            if adj and abs(adj.total_adjustment_secs) >= 2:
+                adj_pace = f"{adj.adjusted_pace_str} /km"
+                if adj.adjusted_pace_secs_km > 0:
+                    adj_speeds.append(1000.0 / adj.adjusted_pace_secs_km)
+            else:
+                adj_pace = pace  # Same as raw
+                if r.get("average_speed") and r["average_speed"] > 0:
+                    adj_speeds.append(r["average_speed"])
+
+            lines.append(f"| {dt_str} | {name} | {dist} | {pace} | {adj_pace} | {hr} |")
             if r.get("average_speed") and r["average_speed"] > 0:
                 speeds.append(r["average_speed"])
 
@@ -1000,7 +1072,7 @@ async def _get_pace_progression(args: dict) -> str:
 
             first_pace_secs = 1000 / first_half_avg
             second_pace_secs = 1000 / second_half_avg
-            pace_diff = first_pace_secs - second_pace_secs  # positive = faster (lower pace)
+            pace_diff = first_pace_secs - second_pace_secs
 
             if abs(diff_pct) < 1:
                 trend = "Stable"
@@ -1010,9 +1082,80 @@ async def _get_pace_progression(args: dict) -> str:
                 trend = f"Slower by {abs(pace_diff):.0f}s/km ({abs(diff_pct):.1f}%)"
 
             lines.append("")
-            lines.append(f"**Trend**: {trend} (comparing first {mid} vs last {len(speeds) - mid} runs)")
+            lines.append(f"**Raw trend**: {trend} (first {mid} vs last {len(speeds) - mid} runs)")
+
+        # Adjusted trend: strips out elevation + fatigue effects
+        if len(adj_speeds) >= 2:
+            mid = len(adj_speeds) // 2
+            first_half_avg = sum(adj_speeds[:mid]) / mid
+            second_half_avg = sum(adj_speeds[mid:]) / (len(adj_speeds) - mid)
+            diff_pct = ((second_half_avg - first_half_avg) / first_half_avg) * 100
+
+            first_pace_secs = 1000 / first_half_avg
+            second_pace_secs = 1000 / second_half_avg
+            pace_diff = first_pace_secs - second_pace_secs
+
+            if abs(diff_pct) < 1:
+                adj_trend = "Stable"
+            elif diff_pct > 0:
+                adj_trend = f"Faster by {abs(pace_diff):.0f}s/km ({abs(diff_pct):.1f}%)"
+            else:
+                adj_trend = f"Slower by {abs(pace_diff):.0f}s/km ({abs(diff_pct):.1f}%)"
+
+            lines.append(f"**Adjusted trend**: {adj_trend} (effort-normalized, strips elevation + fatigue)")
 
         lines.append("")
+
+    return "\n".join(lines)
+
+
+async def _get_effort_adjusted(args: dict) -> str:
+    """Full effort-adjusted pace with weather for a single activity."""
+    activity_id = args["activity_id"]
+    async with _client() as c:
+        act = await c.get_activity(activity_id)
+        weather = await _get_activity_weather(c, activity_id, act) if act else None
+
+    if not act:
+        return f"Activity {activity_id} not found."
+
+    adj = _effort_adjust(act, weather)
+
+    name = act.get("name", "Untitled")
+    dt = (act.get("start_date_local") or "")[:10]
+    pace = fmt_pace(act.get("average_speed"))
+
+    lines = [f"# Effort-Adjusted Pace: {name}", f"*{dt}*", ""]
+
+    lines.append(f"**Raw pace:** {pace}")
+    if act.get("gap"):
+        lines.append(f"**GAP:** {fmt_pace(act['gap'])}")
+
+    if adj and abs(adj.total_adjustment_secs) >= 2:
+        lines.append(f"**Effort-adjusted:** {adj.adjusted_pace_str} /km")
+        lines.append("")
+        lines.append("## Adjustment Breakdown")
+        lines.append(f"Total adjustment: {abs(adj.total_adjustment_secs):.0f}s/km")
+        lines.append(adj.breakdown())
+        lines.append("")
+        lines.append(f"*{adj.conditions_summary}*")
+    else:
+        lines.append("")
+        lines.append("Near-ideal conditions — no significant adjustment needed.")
+
+    # Context
+    lines.append("")
+    lines.append("## Conditions")
+    if weather:
+        lines.append(f"- {format_weather(weather)}")
+        lines.append(f"- {weather['running_impact']}")
+    else:
+        lines.append("- Weather data not available for this run")
+
+    lines.append(f"- Elevation: +{fmt_elevation(act.get('total_elevation_gain'))} / -{fmt_elevation(act.get('total_elevation_loss'))}")
+
+    if act.get("icu_ctl") is not None and act.get("icu_atl") is not None:
+        lines.append(f"- {fmt_tsb(act.get('icu_ctl'), act.get('icu_atl'))}")
 
     return "\n".join(lines)
 
@@ -1070,13 +1213,33 @@ async def _compare_runs(args: dict) -> str:
                     lines.append(f"- ⚡ Very different humidity conditions — pace comparison needs context")
         lines.append("")
 
-    def _col(a):
-        return {
+    # Effort-adjusted paces
+    adj1 = _effort_adjust(a1, w1)
+    adj2 = _effort_adjust(a2, w2)
+
+    # Show effort-adjusted comparison if either run had significant adjustments
+    if (adj1 and abs(adj1.total_adjustment_secs) >= 2) or (adj2 and abs(adj2.total_adjustment_secs) >= 2):
+        lines.append("## Effort-Adjusted Pace")
+        lines.append("*What each run is equivalent to in ideal conditions (10°C, flat, fresh):*")
+        if adj1:
+            lines.append(f"- **{a1.get('name', 'Run 1')}**: {adj1.summary()}")
+        if adj2:
+            lines.append(f"- **{a2.get('name', 'Run 2')}**: {adj2.summary()}")
+        lines.append("")
+
+    def _col(a, adj=None):
+        cols = {
             "Name": a.get("name", "—"),
             "Date": (a.get("start_date_local") or "")[:10],
             "Distance": fmt_distance(a.get("distance")),
             "Duration": fmt_duration(a.get("moving_time")),
             "Pace": fmt_pace(a.get("average_speed")),
+        }
+        if adj and abs(adj.total_adjustment_secs) >= 2:
+            cols["Adj. Pace"] = f"{adj.adjusted_pace_str} /km"
+        else:
+            cols["Adj. Pace"] = "—"
+        cols.update({
             "GAP": fmt_pace(a.get("gap")) if a.get("gap") else "—",
             "Avg HR": fmt_hr(a.get("average_heartrate")),
             "Max HR": fmt_hr(a.get("max_heartrate")),
@@ -1091,10 +1254,11 @@ async def _compare_runs(args: dict) -> str:
             "ATL": f"{a.get('icu_atl', 0):.0f}" if a.get("icu_atl") else "—",
             "TSB": f"{a.get('icu_ctl', 0) - a.get('icu_atl', 0):+.0f}" if a.get("icu_ctl") else "—",
             "Gear": (a.get("gear") or {}).get("name", "—"),
-        }
+        })
+        return cols
 
-    c1 = _col(a1)
-    c2 = _col(a2)
+    c1 = _col(a1, adj1)
+    c2 = _col(a2, adj2)
 
     lines.append(f"| Metric | {c1['Name']} | {c2['Name']} |")
     lines.append("|---|---|---|")
@@ -1523,6 +1687,7 @@ _HANDLERS = {
     "get_day_readiness": _get_day_readiness,
     "get_training_load": _get_training_load,
     "get_planned_workouts": _get_planned_workouts,
+    "get_effort_adjusted": _get_effort_adjusted,
 }
 
 
