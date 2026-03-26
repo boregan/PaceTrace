@@ -631,6 +631,24 @@ async def _get_fitness(args: dict) -> str:
         week_load = sum(d.get("ctlLoad") or 0 for d in week_data)
         lines.append(f"- {week_start}: CTL {week_ctl:.0f} | ATL {week_atl:.0f} | TSB {week_ctl - week_atl:+.0f} | load {week_load:.0f}")
 
+    # RHR baseline drift
+    rhr_values = [(w.get("id", ""), w.get("restingHR")) for w in wellness if w.get("restingHR")]
+    if len(rhr_values) >= 14:
+        lines.append("")
+        lines.append("## Resting HR Baseline")
+        first_half = [v for _, v in rhr_values[:len(rhr_values)//2]]
+        second_half = [v for _, v in rhr_values[len(rhr_values)//2:]]
+        avg_early = sum(first_half) / len(first_half)
+        avg_recent = sum(second_half) / len(second_half)
+        drift = avg_recent - avg_early
+        lines.append(f"- Early period avg: {avg_early:.0f} bpm")
+        lines.append(f"- Recent avg: {avg_recent:.0f} bpm")
+        if abs(drift) >= 2:
+            direction = "rising" if drift > 0 else "dropping"
+            lines.append(f"- Trend: {direction} {abs(drift):.1f} bpm (sustained drift can signal overtraining or improving fitness)")
+        else:
+            lines.append(f"- Trend: stable ({drift:+.1f} bpm)")
+
     # Daily detail (last 14 days)
     lines.append("")
     lines.append("## Daily Detail (last 14 days)")
@@ -885,36 +903,106 @@ async def _get_pace_curves(args: dict) -> str:
 
 async def _get_pace_progression(args: dict) -> str:
     days = args.get("days", 180)
-    distances = args.get("distances", [1000, 5000, 10000, 21097])
 
     async with _client() as c:
-        data = await c.get_activity_pace_curves_over_time(
-            distances_m=distances,
+        activities = await c.list_activities(
             oldest=str(date.today() - timedelta(days=days)),
         )
 
-    if not data:
-        return "No pace progression data found."
+    runs = [a for a in activities if _is_run(a)]
+    if not runs:
+        return "No runs found in the specified period."
+
+    # Sort chronologically (oldest first)
+    runs.sort(key=lambda a: a.get("start_date_local", ""))
 
     lines = [f"# Pace Progression (last {days} days)", ""]
 
-    dist_labels = {1000: "1km", 5000: "5km", 10000: "10km", 21097: "HM", 42195: "Marathon"}
+    # ── Weekly summary ────────────────────────────────────
+    lines.append("## Weekly Overview")
+    lines.append("")
 
-    for dist in distances:
-        label = dist_labels.get(dist, f"{dist}m")
-        lines.append(f"## {label}")
+    # Group runs by ISO week
+    weeks: dict[str, list[dict]] = {}
+    for r in runs:
+        dt_str = (r.get("start_date_local") or "")[:10]
+        if not dt_str:
+            continue
+        try:
+            dt = datetime.strptime(dt_str, "%Y-%m-%d")
+            week_key = f"{dt.isocalendar()[0]}-W{dt.isocalendar()[1]:02d}"
+        except ValueError:
+            continue
+        weeks.setdefault(week_key, []).append(r)
 
-        # data structure varies — extract what we can
-        if isinstance(data, list):
-            for entry in data:
-                act_date = (entry.get("start_date_local") or entry.get("date", ""))[:10]
-                if not act_date:
-                    continue
-                # Find value for this distance
-                values = entry.get("values", {})
-                val = values.get(str(dist)) or values.get(dist)
-                if val and val > 0:
-                    lines.append(f"- {act_date}: {fmt_duration(val)} ({fmt_pace(dist / val)})")
+    for week_key in sorted(weeks.keys()):
+        week_runs = weeks[week_key]
+        total_dist = sum(r.get("distance", 0) for r in week_runs)
+        avg_speed = sum(r.get("average_speed", 0) for r in week_runs) / len(week_runs) if week_runs else 0
+        lines.append(f"### {week_key} ({len(week_runs)} runs, {fmt_distance(total_dist)} total, avg {fmt_pace(avg_speed)})")
+        for r in week_runs:
+            dt_str = (r.get("start_date_local") or "")[:10]
+            name = r.get("name", "Untitled")
+            dist = fmt_distance(r.get("distance"))
+            pace = fmt_pace(r.get("average_speed"))
+            hr = fmt_hr(r.get("average_heartrate"))
+            lines.append(f"- {dt_str}: {name} | {dist} | {pace} | {hr}")
+        lines.append("")
+
+    # ── Per-distance category analysis ────────────────────
+    categories = [
+        ("5K runs (4-6 km)", 4000, 6000),
+        ("10K runs (8-12 km)", 8000, 12000),
+        ("Half marathon (18-22 km)", 18000, 22000),
+        ("Long runs (>22 km)", 22001, float("inf")),
+    ]
+
+    for cat_name, lo, hi in categories:
+        cat_runs = [
+            r for r in runs
+            if r.get("distance") and lo <= r["distance"] <= hi
+        ]
+
+        if not cat_runs:
+            continue
+
+        lines.append(f"## {cat_name} ({len(cat_runs)} runs)")
+        lines.append("")
+        lines.append("| Date | Name | Distance | Pace | HR |")
+        lines.append("|------|------|----------|------|----|")
+
+        speeds = []
+        for r in cat_runs:
+            dt_str = (r.get("start_date_local") or "")[:10]
+            name = r.get("name", "Untitled")
+            dist = fmt_distance(r.get("distance"))
+            pace = fmt_pace(r.get("average_speed"))
+            hr = fmt_hr(r.get("average_heartrate"))
+            lines.append(f"| {dt_str} | {name} | {dist} | {pace} | {hr} |")
+            if r.get("average_speed") and r["average_speed"] > 0:
+                speeds.append(r["average_speed"])
+
+        # Trend analysis: compare first half vs second half
+        if len(speeds) >= 2:
+            mid = len(speeds) // 2
+            first_half_avg = sum(speeds[:mid]) / mid
+            second_half_avg = sum(speeds[mid:]) / (len(speeds) - mid)
+            diff_pct = ((second_half_avg - first_half_avg) / first_half_avg) * 100
+
+            first_pace_secs = 1000 / first_half_avg
+            second_pace_secs = 1000 / second_half_avg
+            pace_diff = first_pace_secs - second_pace_secs  # positive = faster (lower pace)
+
+            if abs(diff_pct) < 1:
+                trend = "Stable"
+            elif diff_pct > 0:
+                trend = f"Faster by {abs(pace_diff):.0f}s/km ({abs(diff_pct):.1f}%)"
+            else:
+                trend = f"Slower by {abs(pace_diff):.0f}s/km ({abs(diff_pct):.1f}%)"
+
+            lines.append("")
+            lines.append(f"**Trend**: {trend} (comparing first {mid} vs last {len(speeds) - mid} runs)")
+
         lines.append("")
 
     return "\n".join(lines)
@@ -1154,7 +1242,9 @@ async def _get_day_readiness(args: dict) -> str:
 
     async with _client() as c:
         wellness = await c.get_wellness(oldest=oldest, newest=target_date)
-        recent = await c.list_activities(oldest=target_date - timedelta(days=3), newest=target_date)
+        recent = await c.list_activities(oldest=target_date - timedelta(days=5), newest=target_date)
+        # Also get 28-day wellness for RHR baseline drift
+        wellness_28d = await c.get_wellness(oldest=target_date - timedelta(days=28), newest=target_date)
 
     today_data = None
     for w in wellness:
@@ -1167,13 +1257,29 @@ async def _get_day_readiness(args: dict) -> str:
     if not today_data:
         lines.append("No wellness data recorded for this day yet.")
     else:
-        # Form
+        # Form + WHY you're fatigued
         ctl = today_data.get("ctl")
         atl = today_data.get("atl")
         if ctl is not None:
+            tsb = ctl - atl
             lines.append(f"## Form")
             lines.append(f"- {fmt_tsb(ctl, atl)}")
             lines.append(f"- Ramp Rate: {fmt_ramp_rate(today_data.get('rampRate'))}")
+
+            # Explain the fatigue by pointing at the hardest recent sessions
+            if tsb < -5:
+                hard_runs = sorted(
+                    [a for a in recent if _is_run(a) and (a.get("icu_training_load") or 0) > 0],
+                    key=lambda a: a.get("icu_training_load", 0),
+                    reverse=True,
+                )
+                if hard_runs:
+                    top = hard_runs[:3]
+                    lines.append(f"- **Why:** mostly from " + ", ".join(
+                        f"{(r.get('start_date_local') or '')[:10]} {r.get('name', 'run')} "
+                        f"(load {r.get('icu_training_load', 0):.0f})"
+                        for r in top
+                    ))
             lines.append("")
 
         # HRV trend
@@ -1186,16 +1292,26 @@ async def _get_day_readiness(args: dict) -> str:
             lines.append(f"- Today: {interpret_hrv(hrv_today, hrv_7d)}")
             lines.append("")
 
-        # Resting HR trend
-        rhr_values = [w.get("restingHR") for w in wellness if w.get("restingHR")]
+        # Resting HR with baseline drift detection
+        rhr_values_7d = [w.get("restingHR") for w in wellness if w.get("restingHR")]
+        rhr_values_28d = [w.get("restingHR") for w in wellness_28d if w.get("restingHR")]
         rhr_today = today_data.get("restingHR")
-        if rhr_today and rhr_values:
-            rhr_avg = sum(rhr_values) / len(rhr_values)
-            rhr_diff = rhr_today - rhr_avg
+        if rhr_today and rhr_values_7d:
+            rhr_avg_7d = sum(rhr_values_7d) / len(rhr_values_7d)
+            rhr_diff = rhr_today - rhr_avg_7d
             lines.append("## Resting HR")
             lines.append(f"- Today: {rhr_today} bpm ({rhr_diff:+.0f} vs 7-day avg)")
             if rhr_diff > 5:
                 lines.append(f"- (could be anything — stress, caffeine, poor sleep, fighting something off)")
+
+            # Baseline drift: compare first 14 days avg to last 7 days avg
+            if len(rhr_values_28d) >= 14:
+                first_half = rhr_values_28d[:len(rhr_values_28d)//2]
+                second_half = rhr_values_28d[len(rhr_values_28d)//2:]
+                drift = (sum(second_half) / len(second_half)) - (sum(first_half) / len(first_half))
+                if abs(drift) >= 2:
+                    direction = "up" if drift > 0 else "down"
+                    lines.append(f"- Baseline trend: drifting {direction} {abs(drift):.1f} bpm over 4 weeks")
             lines.append("")
 
         # Sleep
@@ -1221,15 +1337,17 @@ async def _get_day_readiness(args: dict) -> str:
             lines.append(f"## Readiness Score: {today_data['readiness']:.0f}/100")
             lines.append("")
 
-    # Recent training context
+    # Recent training context — full 5 day view with load attribution
     runs = [a for a in recent if _is_run(a)]
     if runs:
-        lines.append("## Recent Training")
-        for r in runs:
+        total_load = sum(r.get("icu_training_load") or 0 for r in runs)
+        lines.append(f"## Recent Training (5 days, total load: {total_load:.0f})")
+        for r in sorted(runs, key=lambda x: x.get("start_date_local", ""), reverse=True):
             dt = (r.get("start_date_local") or "")[:10]
+            load = r.get("icu_training_load") or 0
             lines.append(
                 f"- {dt}: {r.get('name', '')} — {fmt_distance(r.get('distance'))} "
-                f"@ {fmt_pace(r.get('average_speed'))} | load {fmt_load(r.get('icu_training_load'))}"
+                f"@ {fmt_pace(r.get('average_speed'))} | load {fmt_load(load)}"
             )
 
     return "\n".join(lines)
