@@ -1,15 +1,34 @@
 """
-intervals.icu onboarding — simple API key connection page for PaceTrace v2.
+intervals.icu onboarding — full setup flow for PaceTrace v2.
+
+Pages:
+  GET  /v2/connect  — setup guide + API key form
+  POST /v2/connect  — validate key, save user, show success + upload
+  POST /v2/upload   — accept Strava export ZIP, upload activities to intervals.icu
 """
 
-from fastapi import APIRouter, Request, Form
-from fastapi.responses import HTMLResponse
+import asyncio
+import io
+import zipfile
+from pathlib import Path
+
+from fastapi import APIRouter, Request, Form, UploadFile, File
+from fastapi.responses import HTMLResponse, JSONResponse
 import httpx
 
-from ..db.users import upsert_user
+from ..db.users import upsert_user, get_user
 
 router = APIRouter()
 
+SUPPORTED_EXTENSIONS = {".fit", ".gpx", ".tcx", ".fit.gz", ".gpx.gz", ".tcx.gz"}
+
+
+def _is_activity_file(name: str) -> bool:
+    lower = name.lower()
+    return any(lower.endswith(ext) for ext in SUPPORTED_EXTENSIONS)
+
+
+# ── Page 1: Setup guide ──────────────────────────────────────────────────────
 
 CONNECT_HTML = """
 <!DOCTYPE html>
@@ -33,7 +52,6 @@ CONNECT_HTML = """
         .substep { padding: 8px 0 8px 16px; border-left: 2px solid #333; margin: 8px 0; color: #ccc; font-size: 14px; line-height: 1.6; }
         .substep a { color: #ff4500; text-decoration: none; }
         .time { display: inline-block; background: #1a2a1a; color: #4caf50; font-size: 11px; padding: 2px 8px; border-radius: 4px; margin-left: 8px; }
-        .optional { display: inline-block; background: #2a2a1a; color: #ff9800; font-size: 11px; padding: 2px 8px; border-radius: 4px; margin-left: 8px; }
         label { display: block; font-size: 13px; color: #999; margin-bottom: 6px; }
         input[type=text], input[type=password] { width: 100%; padding: 12px; background: #111; border: 1px solid #333; border-radius: 8px; color: #fff; font-size: 14px; font-family: monospace; }
         input:focus { outline: none; border-color: #ff4500; }
@@ -42,7 +60,6 @@ CONNECT_HTML = """
         button:hover { background: #e03d00; }
         .note { background: #111; border: 1px solid #333; border-radius: 8px; padding: 14px; font-size: 13px; color: #888; line-height: 1.6; margin-top: 12px; }
         .error { background: #2a1010; border: 1px solid #ff3333; color: #ff6666; }
-        code { background: #111; padding: 2px 6px; border-radius: 4px; font-size: 13px; color: #ccc; }
     </style>
 </head>
 <body>
@@ -50,7 +67,6 @@ CONNECT_HTML = """
     <h1>PaceTrace</h1>
     <p class="subtitle">Get set up in about 5 minutes. You'll need a free intervals.icu account.</p>
 
-    <!-- Phase 1: Create intervals.icu -->
     <div class="phase">
         <div class="phase-header">
             <span class="phase-num">1</span>
@@ -74,38 +90,9 @@ CONNECT_HTML = """
         </div>
     </div>
 
-    <!-- Phase 2: Import history -->
     <div class="phase">
         <div class="phase-header">
             <span class="phase-num">2</span>
-            <span class="phase-title">Import your run history</span>
-            <span class="optional">optional</span>
-        </div>
-        <div class="phase-desc">
-            intervals.icu free tier only syncs <b>going forward</b>. To get your full Strava history
-            (so PaceTrace can show fitness trends, pace progression, etc), do a one-time Strava export:
-        </div>
-        <div class="substep">
-            Go to <a href="https://www.strava.com/athlete/delete_your_account" target="_blank">Strava → Settings → "Download or Delete Your Account"</a>
-        </div>
-        <div class="substep">
-            Click <b>"Request Your Archive"</b> — Strava emails you a ZIP of all your activities (takes a few minutes)
-        </div>
-        <div class="substep">
-            Once downloaded, run our backfill script:<br>
-            <code>python scripts/backfill_intervals.py --zip ~/Downloads/export.zip --user YOUR_USERNAME</code><br>
-            This uploads all your historical runs to intervals.icu automatically.
-        </div>
-        <div class="note">
-            Don't worry if you skip this — PaceTrace works fine without history, it just
-            means fitness trends start from when you connected. Your history builds over time.
-        </div>
-    </div>
-
-    <!-- Phase 3: Connect to PaceTrace -->
-    <div class="phase">
-        <div class="phase-header">
-            <span class="phase-num">3</span>
             <span class="phase-title">Connect to PaceTrace</span>
             <span class="time">1 min</span>
         </div>
@@ -148,61 +135,175 @@ CONNECT_HTML = """
 """
 
 
+# ── Page 2: Success + history upload ──────────────────────────────────────────
+
 SUCCESS_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>PaceTrace v2 — Connected!</title>
+    <title>PaceTrace — Connected!</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{ font-family: -apple-system, system-ui, sans-serif; background: #0a0a0a; color: #e0e0e0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }}
-        .card {{ background: #1a1a1a; border: 1px solid #333; border-radius: 16px; padding: 40px; max-width: 520px; width: 90%; }}
-        h1 {{ font-size: 24px; margin-bottom: 8px; color: #fff; }}
-        .success {{ color: #4caf50; font-size: 14px; margin-bottom: 24px; }}
-        .config {{ background: #111; border: 1px solid #333; border-radius: 8px; padding: 16px; margin: 16px 0; font-family: monospace; font-size: 12px; color: #ccc; white-space: pre-wrap; word-break: break-all; }}
+        body {{ font-family: -apple-system, system-ui, sans-serif; background: #0a0a0a; color: #e0e0e0; min-height: 100vh; padding: 40px 20px; }}
+        .container {{ max-width: 600px; margin: 0 auto; }}
+        h1 {{ font-size: 28px; margin-bottom: 4px; color: #fff; }}
+        .success {{ color: #4caf50; font-size: 15px; margin-bottom: 32px; }}
+        .phase {{ background: #1a1a1a; border: 1px solid #333; border-radius: 16px; padding: 32px; margin-bottom: 24px; }}
+        .phase-header {{ display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }}
+        .phase-num {{ background: #4caf50; color: #fff; width: 28px; height: 28px; border-radius: 50%; text-align: center; line-height: 28px; font-size: 16px; flex-shrink: 0; }}
+        .phase-title {{ font-size: 18px; font-weight: 600; color: #fff; }}
+        .phase-desc {{ color: #999; font-size: 14px; line-height: 1.7; margin-bottom: 16px; }}
+        .phase-desc a {{ color: #ff4500; text-decoration: none; }}
+        .substep {{ padding: 8px 0 8px 16px; border-left: 2px solid #333; margin: 8px 0; color: #ccc; font-size: 14px; line-height: 1.6; }}
+        .substep a {{ color: #ff4500; text-decoration: none; }}
+        .config {{ background: #111; border: 1px solid #333; border-radius: 8px; padding: 16px; margin: 12px 0; font-family: monospace; font-size: 12px; color: #ccc; white-space: pre-wrap; word-break: break-all; cursor: pointer; position: relative; }}
+        .config:hover {{ border-color: #ff4500; }}
+        .config::after {{ content: 'click to copy'; position: absolute; right: 8px; top: 8px; font-size: 10px; color: #666; font-family: -apple-system, system-ui, sans-serif; }}
         .section {{ margin-bottom: 24px; }}
         .section h3 {{ font-size: 14px; color: #999; margin-bottom: 8px; }}
-        .label {{ font-size: 13px; color: #888; margin-bottom: 4px; }}
-        a {{ color: #ff4500; text-decoration: none; }}
+        .note {{ background: #111; border: 1px solid #333; border-radius: 8px; padding: 14px; font-size: 13px; color: #888; line-height: 1.6; margin-top: 12px; }}
+        .optional {{ display: inline-block; background: #2a2a1a; color: #ff9800; font-size: 11px; padding: 2px 8px; border-radius: 4px; margin-left: 8px; }}
+
+        /* Drop zone */
+        .dropzone {{ border: 2px dashed #333; border-radius: 12px; padding: 40px 20px; text-align: center; cursor: pointer; transition: all 0.2s; margin: 16px 0; }}
+        .dropzone:hover, .dropzone.dragover {{ border-color: #ff4500; background: #1a1010; }}
+        .dropzone-text {{ color: #888; font-size: 14px; }}
+        .dropzone-text b {{ color: #ff4500; }}
+        .dropzone input {{ display: none; }}
+
+        /* Progress */
+        #upload-progress {{ display: none; margin-top: 16px; }}
+        .progress-bar {{ background: #111; border-radius: 8px; height: 8px; overflow: hidden; }}
+        .progress-fill {{ background: #ff4500; height: 100%; width: 0%; transition: width 0.3s; border-radius: 8px; }}
+        .progress-text {{ font-size: 13px; color: #999; margin-top: 8px; }}
+        .progress-log {{ background: #111; border: 1px solid #333; border-radius: 8px; padding: 12px; margin-top: 12px; font-family: monospace; font-size: 11px; color: #888; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }}
     </style>
 </head>
 <body>
-<div class="card">
-    <h1>You're connected! </h1>
-    <p class="success">Welcome, {display_name}. Your intervals.icu account is linked.</p>
+<div class="container">
+    <h1>You're in.</h1>
+    <p class="success">Welcome {display_name} — your intervals.icu account is linked.</p>
 
-    <div class="section">
-        <h3>Your username</h3>
-        <div class="config">{username}</div>
+    <!-- Claude connection -->
+    <div class="phase">
+        <div class="phase-header">
+            <span class="phase-num">&check;</span>
+            <span class="phase-title">Add to Claude</span>
+        </div>
+        <div class="section">
+            <h3>Claude (browser) — add as MCP integration</h3>
+            <div class="config" onclick="navigator.clipboard.writeText(this.innerText.replace('click to copy','').trim())">{base_url}/v2/mcp/sse?user={username}</div>
+        </div>
     </div>
 
-    <div class="section">
-        <h3>Connect to Claude (browser)</h3>
-        <p class="label">Add this URL as an MCP integration in Claude.ai settings:</p>
-        <div class="config">{base_url}/v2/mcp/sse?user={username}</div>
-    </div>
+    <!-- History import -->
+    <div class="phase">
+        <div class="phase-header">
+            <span class="phase-num">+</span>
+            <span class="phase-title">Import your Strava history</span>
+            <span class="optional">optional</span>
+        </div>
+        <div class="phase-desc">
+            intervals.icu free tier only syncs going forward. To get your full run history
+            (fitness trends, pace progression, etc), do a quick Strava export:
+        </div>
+        <div class="substep">
+            Go to <a href="https://www.strava.com/athlete/delete_your_account" target="_blank">Strava → Settings → "Download or Delete Your Account"</a>
+        </div>
+        <div class="substep">
+            Click <b>"Request Your Archive"</b> — Strava emails you a ZIP (takes a few minutes)
+        </div>
+        <div class="substep">
+            Drop the ZIP file below — we'll upload your activities to intervals.icu for you
+        </div>
 
-    <div class="section">
-        <h3>Connect to Claude Desktop</h3>
-        <div class="config">{{
-  "mcpServers": {{
-    "pacetrace-v2": {{
-      "command": "python",
-      "args": ["{mcp_path}"],
-      "env": {{
-        "PACETRACE_USER": "{username}",
-        "PACETRACE_VERSION": "v2"
-      }}
-    }}
-  }}
-}}</div>
+        <div class="dropzone" id="dropzone">
+            <div class="dropzone-text">
+                <b>Drop your Strava export ZIP here</b><br>
+                or click to select
+            </div>
+            <input type="file" id="file-input" accept=".zip">
+        </div>
+
+        <div id="upload-progress">
+            <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+            <div class="progress-text" id="progress-text">Starting...</div>
+            <div class="progress-log" id="progress-log"></div>
+        </div>
+
+        <div class="note">
+            Don't worry if you skip this — PaceTrace works without history.
+            Your data builds over time as you run.
+        </div>
     </div>
 </div>
+
+<script>
+const USERNAME = "{username}";
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('file-input');
+const progress = document.getElementById('upload-progress');
+const progressFill = document.getElementById('progress-fill');
+const progressText = document.getElementById('progress-text');
+const progressLog = document.getElementById('progress-log');
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', e => {{ e.preventDefault(); dropzone.classList.add('dragover'); }});
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {{
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+}});
+fileInput.addEventListener('change', () => {{
+    if (fileInput.files.length) handleFile(fileInput.files[0]);
+}});
+
+async function handleFile(file) {{
+    if (!file.name.endsWith('.zip')) {{
+        alert('Please select a ZIP file');
+        return;
+    }}
+
+    dropzone.style.display = 'none';
+    progress.style.display = 'block';
+    progressText.textContent = `Uploading ${{file.name}} (${{(file.size / 1024 / 1024).toFixed(1)}} MB)...`;
+    progressLog.textContent = '';
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('username', USERNAME);
+
+    try {{
+        const resp = await fetch('/v2/upload', {{
+            method: 'POST',
+            body: formData,
+        }});
+        const result = await resp.json();
+
+        if (result.success) {{
+            progressFill.style.width = '100%';
+            progressText.textContent = `Done! ${{result.uploaded}} uploaded, ${{result.skipped}} already existed, ${{result.failed}} failed`;
+            progressLog.textContent = result.log;
+        }} else {{
+            progressText.textContent = `Error: ${{result.error}}`;
+            progressFill.style.background = '#ff3333';
+            progressFill.style.width = '100%';
+        }}
+    }} catch (e) {{
+        progressText.textContent = `Upload failed: ${{e.message}}`;
+        progressFill.style.background = '#ff3333';
+        progressFill.style.width = '100%';
+    }}
+}}
+</script>
 </body>
 </html>
 """
 
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/v2/connect", response_class=HTMLResponse)
 async def connect_page():
@@ -226,11 +327,11 @@ async def connect_submit(
             )
             resp.raise_for_status()
             profile = resp.json()
-    except httpx.HTTPStatusError as e:
+    except httpx.HTTPStatusError:
         return HTMLResponse(
             CONNECT_HTML.replace(
                 "</form>",
-                '<div class="info error">Invalid API key or athlete ID. Please check and try again.</div></form>',
+                '<div class="note error">Invalid API key or athlete ID. Please check and try again.</div></form>',
             ),
             status_code=400,
         )
@@ -238,7 +339,7 @@ async def connect_submit(
         return HTMLResponse(
             CONNECT_HTML.replace(
                 "</form>",
-                f'<div class="info error">Connection error: {e}</div></form>',
+                f'<div class="note error">Connection error: {e}</div></form>',
             ),
             status_code=500,
         )
@@ -254,7 +355,7 @@ async def connect_submit(
         slug = f"athlete-{real_athlete_id}"
 
     # Save user
-    user = upsert_user(
+    upsert_user(
         username=slug,
         display_name=name or display_name,
         icu_athlete_id=real_athlete_id,
@@ -263,12 +364,92 @@ async def connect_submit(
 
     # Build success page
     base_url = str(request.base_url).rstrip("/")
-    mcp_path = "/app/mcp_server_v2.py"  # Railway path
 
     html = SUCCESS_HTML.format(
         display_name=name or display_name,
         username=slug,
         base_url=base_url,
-        mcp_path=mcp_path,
     )
     return HTMLResponse(html)
+
+
+@router.post("/v2/upload")
+async def upload_strava_export(
+    username: str = Form(...),
+    file: UploadFile = File(...),
+):
+    """Accept a Strava export ZIP and upload each activity to intervals.icu."""
+
+    # Get user's intervals.icu credentials
+    user = get_user(username)
+    if not user or not user.get("icu_api_key"):
+        return JSONResponse(
+            {"success": False, "error": "User not found or not connected to intervals.icu"},
+            status_code=400,
+        )
+
+    api_key = user["icu_api_key"]
+
+    # Read the ZIP into memory
+    try:
+        content = await file.read()
+        zf = zipfile.ZipFile(io.BytesIO(content))
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "error": f"Invalid ZIP file: {e}"},
+            status_code=400,
+        )
+
+    activity_files = sorted([n for n in zf.namelist() if _is_activity_file(n)])
+
+    if not activity_files:
+        return JSONResponse(
+            {"success": False, "error": "No activity files (FIT/GPX/TCX) found in the ZIP"},
+            status_code=400,
+        )
+
+    # Upload each file to intervals.icu
+    uploaded = 0
+    skipped = 0
+    failed = 0
+    log_lines = []
+
+    async with httpx.AsyncClient(
+        base_url="https://intervals.icu/api/v1",
+        auth=httpx.BasicAuth("API_KEY", api_key),
+        timeout=30.0,
+    ) as client:
+        for i, name in enumerate(activity_files):
+            fname = Path(name).name
+            file_bytes = zf.read(name)
+
+            try:
+                resp = await client.post(
+                    "/athlete/0/activities",
+                    files={"file": (fname, file_bytes)},
+                )
+                if resp.status_code in (200, 201):
+                    uploaded += 1
+                    log_lines.append(f"[{i+1}/{len(activity_files)}] {fname} — uploaded")
+                elif resp.status_code == 409:
+                    skipped += 1
+                    log_lines.append(f"[{i+1}/{len(activity_files)}] {fname} — already exists")
+                else:
+                    failed += 1
+                    log_lines.append(f"[{i+1}/{len(activity_files)}] {fname} — error {resp.status_code}")
+            except Exception as e:
+                failed += 1
+                log_lines.append(f"[{i+1}/{len(activity_files)}] {fname} — {e}")
+
+            # Brief pause to be polite to the API
+            if i < len(activity_files) - 1:
+                await asyncio.sleep(0.5)
+
+    return JSONResponse({
+        "success": True,
+        "uploaded": uploaded,
+        "skipped": skipped,
+        "failed": failed,
+        "total": len(activity_files),
+        "log": "\n".join(log_lines),
+    })
