@@ -1267,11 +1267,15 @@ def create_combined_app():
     Railway deployment: combine webhook FastAPI app with MCP SSE on /mcp/*.
     Routes registered directly on FastAPI (no sub-app mount) to avoid
     double-prefix /mcp/mcp/messages bug.
+
+    v1 (Strava):        /mcp/sse?user=...    + /mcp/messages
+    v2 (intervals.icu): /v2/mcp/sse?user=... + /v2/mcp/messages + /v2/connect
     """
     from mcp.server.sse import SseServerTransport
     from starlette.requests import Request
     from strava_pipeline.webhook.app import app as fastapi_app
 
+    # ── v1 (Strava) MCP ──
     sse_transport = SseServerTransport("/mcp/messages")
 
     @fastapi_app.get("/mcp/sse")
@@ -1289,6 +1293,34 @@ def create_combined_app():
     @fastapi_app.post("/mcp/messages")
     async def handle_messages(request: Request):
         await sse_transport.handle_post_message(request.scope, request.receive, request._send)
+
+    # ── v2 (intervals.icu) MCP ──
+    from mcp_server_v2 import server as v2_server, _request_user as v2_request_user, DEFAULT_USER as V2_DEFAULT
+    from strava_pipeline.web.icu_onboarding import router as icu_router
+
+    fastapi_app.include_router(icu_router)
+
+    v2_sse_transport = SseServerTransport("/v2/mcp/messages")
+
+    @fastapi_app.get("/v2/mcp/sse")
+    async def handle_v2_sse(request: Request):
+        user = request.query_params.get("user", V2_DEFAULT)
+        token = v2_request_user.set(user)
+        try:
+            async with v2_sse_transport.connect_sse(
+                request.scope, request.receive, request._send
+            ) as streams:
+                await v2_server.run(streams[0], streams[1], v2_server.create_initialization_options())
+        finally:
+            v2_request_user.reset(token)
+
+    @fastapi_app.post("/v2/mcp/messages")
+    async def handle_v2_messages(request: Request):
+        await v2_sse_transport.handle_post_message(request.scope, request.receive, request._send)
+
+    @fastapi_app.get("/v2/health")
+    async def v2_health():
+        return {"status": "ok", "version": "v2", "engine": "intervals.icu"}
 
     return fastapi_app
 
