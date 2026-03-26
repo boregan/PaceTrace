@@ -7,6 +7,7 @@ SSE (Claude.ai browser) transports.
 """
 
 import asyncio
+import httpx
 import json
 import os
 import sys
