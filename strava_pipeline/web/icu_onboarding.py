@@ -25,10 +25,18 @@ router = APIRouter()
 
 SUPPORTED_EXTENSIONS = {".fit", ".gpx", ".tcx", ".fit.gz", ".gpx.gz", ".tcx.gz"}
 
-
+# Garmin exports mix activity FIT files with health/wellness FIT files.
+# Health files are named like "user@email.com_1234567890.fit" — skip them.
+# Activity files live in an "Activities" folder or have a timestamp-style name.
 def _is_activity_file(name: str) -> bool:
     lower = name.lower()
-    return any(lower.endswith(ext) for ext in SUPPORTED_EXTENSIONS)
+    if not any(lower.endswith(ext) for ext in SUPPORTED_EXTENSIONS):
+        return False
+    basename = Path(name).name
+    # Skip Garmin health/wellness snapshots (contain email address)
+    if "@" in basename:
+        return False
+    return True
 
 
 # ── Page 1: Setup guide ──────────────────────────────────────────────────────
@@ -486,10 +494,22 @@ async def upload_history_export(
 
     total = len(activity_files) + len(nested_zip_data)
 
+    # Build full file list: (fname, file_bytes) — read from ZIP now, before streaming
+    all_files: list[tuple[str, bytes]] = []
+    for name in activity_files:
+        all_files.append((Path(name).name, zf.read(name)))
+    all_files.extend(nested_zip_data)
+    zf.close()
+
+    total = len(all_files)
+
     async def _stream():
         yield _sse({"type": "start", "total": total})
 
         uploaded = skipped = failed = idx = 0
+        sem = asyncio.Semaphore(5)  # 5 concurrent uploads
+        results: list[tuple[str, str]] = []  # (fname, status)
+        lock = asyncio.Lock()
 
         try:
             async with httpx.AsyncClient(
@@ -498,45 +518,51 @@ async def upload_history_export(
                 timeout=30.0,
             ) as client:
 
-                async def _upload(fname: str, file_bytes: bytes):
-                    nonlocal uploaded, skipped, failed, idx
-                    idx += 1
-                    try:
-                        resp = await client.post(
-                            "/athlete/0/activities",
-                            files={"file": (fname, file_bytes)},
-                        )
-                        if resp.status_code in (200, 201):
+                async def _upload_one(fname: str, file_bytes: bytes):
+                    async with sem:
+                        try:
+                            resp = await client.post(
+                                "/athlete/0/activities",
+                                files={"file": (fname, file_bytes)},
+                            )
+                            if resp.status_code in (200, 201):
+                                status = "uploaded"
+                            elif resp.status_code == 409:
+                                status = "exists"
+                            else:
+                                status = f"error {resp.status_code}"
+                        except Exception as e:
+                            status = str(e)[:60]
+                        async with lock:
+                            results.append((fname, status))
+
+                # Launch all uploads concurrently (semaphore caps at 5 in-flight)
+                tasks = [
+                    asyncio.create_task(_upload_one(fname, data))
+                    for fname, data in all_files
+                ]
+
+                # Stream progress as results come in
+                reported = 0
+                while reported < total:
+                    await asyncio.sleep(0.1)
+                    async with lock:
+                        new_results = results[reported:]
+                    for fname, status in new_results:
+                        reported += 1
+                        if status == "uploaded":
                             uploaded += 1
-                            status = "uploaded"
-                        elif resp.status_code == 409:
+                        elif status == "exists":
                             skipped += 1
-                            status = "exists"
                         else:
                             failed += 1
-                            status = f"error {resp.status_code}"
-                    except Exception as e:
-                        failed += 1
-                        status = str(e)[:80]
-                    return status
+                        yield _sse({"type": "progress", "idx": reported, "total": total,
+                                    "file": fname, "status": status,
+                                    "uploaded": uploaded, "skipped": skipped, "failed": failed})
 
-                for name in activity_files:
-                    fname = Path(name).name
-                    status = await _upload(fname, zf.read(name))
-                    yield _sse({"type": "progress", "idx": idx, "total": total,
-                                "file": fname, "status": status,
-                                "uploaded": uploaded, "skipped": skipped, "failed": failed})
-                    await asyncio.sleep(0.3)
-
-                for fname, file_bytes in nested_zip_data:
-                    status = await _upload(fname, file_bytes)
-                    yield _sse({"type": "progress", "idx": idx, "total": total,
-                                "file": fname, "status": status,
-                                "uploaded": uploaded, "skipped": skipped, "failed": failed})
-                    await asyncio.sleep(0.3)
+                await asyncio.gather(*tasks)
 
         finally:
-            zf.close()
             Path(tmp_path).unlink(missing_ok=True)
 
         yield _sse({"type": "done", "uploaded": uploaded, "skipped": skipped,
