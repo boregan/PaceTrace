@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 import httpx
 
 from ..db.users import upsert_user, get_user
+from ..analysis.garmin_wellness import build_wellness_records
 
 router = APIRouter()
 
@@ -335,19 +336,31 @@ async function handleFile(file) {{
                 try {{ evt = JSON.parse(dataLine.slice(6)); }} catch {{ continue; }}
 
                 if (evt.type === 'start') {{
-                    progressText.textContent = `Uploading ${{evt.total}} activities...`;
+                    progressText.textContent = `Phase 1/2 — uploading ${{evt.actTotal}} activities...`;
 
-                }} else if (evt.type === 'progress') {{
-                    const pct = Math.round((evt.idx / evt.total) * 100);
+                }} else if (evt.type === 'activity') {{
+                    const pct = Math.round((evt.idx / evt.total) * 45); // activities = 0-45%
                     progressFill.style.width = pct + '%';
-                    progressText.textContent = `${{evt.idx}}/${{evt.total}} — ${{evt.uploaded}} uploaded, ${{evt.skipped}} already existed, ${{evt.failed}} failed`;
-                    const icon = evt.status === 'uploaded' ? '✓' : evt.status === 'exists' ? '—' : '✗';
-                    progressLog.textContent += `${{icon}} ${{evt.file}} (${{evt.status}})\n`;
-                    progressLog.scrollTop = progressLog.scrollHeight;
+                    progressText.textContent = `Activities: ${{evt.idx}}/${{evt.total}} — ${{evt.uploaded}} uploaded, ${{evt.skipped}} already existed, ${{evt.failed}} failed`;
+                    if (evt.status === 'uploaded') {{
+                        progressLog.textContent += `✓ ${{evt.file}}\n`;
+                        progressLog.scrollTop = progressLog.scrollHeight;
+                    }}
+
+                }} else if (evt.type === 'wellness_start') {{
+                    progressText.textContent = `Phase 2/2 — importing ${{evt.total}} days of sleep & health data...`;
+
+                }} else if (evt.type === 'wellness') {{
+                    const pct = 45 + Math.round((evt.done / evt.total) * 55); // wellness = 45-100%
+                    progressFill.style.width = pct + '%';
+                    progressText.textContent = `Sleep & health: ${{evt.done}}/${{evt.total}} days (${{evt.from}} → ${{evt.to}})`;
 
                 }} else if (evt.type === 'done') {{
                     progressFill.style.width = '100%';
-                    progressText.textContent = `Done! ${{evt.uploaded}} uploaded, ${{evt.skipped}} already existed, ${{evt.failed}} failed`;
+                    let summary = `✅ Done! ${{evt.uploaded}} activities uploaded`;
+                    if (evt.skipped) summary += `, ${{evt.skipped}} already existed`;
+                    if (evt.wellDone) summary += ` · ${{evt.wellDone}} days of sleep & health data imported`;
+                    progressText.textContent = summary;
                 }}
             }}
         }}
@@ -492,80 +505,101 @@ async def upload_history_export(
             status_code=400,
         )
 
-    total = len(activity_files) + len(nested_zip_data)
-
-    # Build full file list: (fname, file_bytes) — read from ZIP now, before streaming
+    # Build full activity file list before streaming
     all_files: list[tuple[str, bytes]] = []
     for name in activity_files:
         all_files.append((Path(name).name, zf.read(name)))
     all_files.extend(nested_zip_data)
+
+    # Parse wellness data (sleep, HR, steps, body battery) from the same ZIP
+    try:
+        wellness_records = build_wellness_records(zf)
+    except Exception:
+        wellness_records = []
+
     zf.close()
 
-    total = len(all_files)
+    act_total = len(all_files)
+    well_total = len(wellness_records)
 
     async def _stream():
-        yield _sse({"type": "start", "total": total})
+        yield _sse({"type": "start", "actTotal": act_total, "wellTotal": well_total})
 
-        uploaded = skipped = failed = idx = 0
-        sem = asyncio.Semaphore(5)  # 5 concurrent uploads
-        results: list[tuple[str, str]] = []  # (fname, status)
+        # ── Phase 1: Activities ──────────────────────────────────────────────
+        uploaded = skipped = failed = 0
+        sem = asyncio.Semaphore(5)
+        results: list[tuple[str, str]] = []
         lock = asyncio.Lock()
 
-        try:
+        async with httpx.AsyncClient(
+            base_url="https://intervals.icu/api/v1",
+            auth=httpx.BasicAuth("API_KEY", api_key),
+            timeout=30.0,
+        ) as client:
+
+            async def _upload_one(fname: str, file_bytes: bytes):
+                async with sem:
+                    try:
+                        resp = await client.post(
+                            "/athlete/0/activities",
+                            files={"file": (fname, file_bytes)},
+                        )
+                        status = ("uploaded" if resp.status_code in (200, 201)
+                                  else "exists" if resp.status_code == 409
+                                  else f"error {resp.status_code}")
+                    except Exception as e:
+                        status = str(e)[:60]
+                    async with lock:
+                        results.append((fname, status))
+
+            tasks = [asyncio.create_task(_upload_one(f, d)) for f, d in all_files]
+
+            reported = 0
+            while reported < act_total:
+                await asyncio.sleep(0.1)
+                async with lock:
+                    new = results[reported:]
+                for fname, status in new:
+                    reported += 1
+                    if status == "uploaded":
+                        uploaded += 1
+                    elif status == "exists":
+                        skipped += 1
+                    else:
+                        failed += 1
+                    yield _sse({"type": "activity", "idx": reported, "total": act_total,
+                                "file": fname, "status": status,
+                                "uploaded": uploaded, "skipped": skipped, "failed": failed})
+            await asyncio.gather(*tasks)
+
+        # ── Phase 2: Wellness (sleep / HR / steps) ───────────────────────────
+        if wellness_records:
+            yield _sse({"type": "wellness_start", "total": well_total})
+            well_done = 0
+            batch_size = 30
             async with httpx.AsyncClient(
                 base_url="https://intervals.icu/api/v1",
                 auth=httpx.BasicAuth("API_KEY", api_key),
                 timeout=30.0,
             ) as client:
+                for i in range(0, well_total, batch_size):
+                    batch = wellness_records[i: i + batch_size]
+                    try:
+                        resp = await client.put(
+                            "/athlete/0/wellness",
+                            json=batch,
+                            headers={"Content-Type": "application/json"},
+                        )
+                        ok = resp.status_code in (200, 201)
+                    except Exception:
+                        ok = False
+                    well_done += len(batch)
+                    yield _sse({"type": "wellness", "done": well_done, "total": well_total,
+                                "from": batch[0]["id"], "to": batch[-1]["id"], "ok": ok})
 
-                async def _upload_one(fname: str, file_bytes: bytes):
-                    async with sem:
-                        try:
-                            resp = await client.post(
-                                "/athlete/0/activities",
-                                files={"file": (fname, file_bytes)},
-                            )
-                            if resp.status_code in (200, 201):
-                                status = "uploaded"
-                            elif resp.status_code == 409:
-                                status = "exists"
-                            else:
-                                status = f"error {resp.status_code}"
-                        except Exception as e:
-                            status = str(e)[:60]
-                        async with lock:
-                            results.append((fname, status))
-
-                # Launch all uploads concurrently (semaphore caps at 5 in-flight)
-                tasks = [
-                    asyncio.create_task(_upload_one(fname, data))
-                    for fname, data in all_files
-                ]
-
-                # Stream progress as results come in
-                reported = 0
-                while reported < total:
-                    await asyncio.sleep(0.1)
-                    async with lock:
-                        new_results = results[reported:]
-                    for fname, status in new_results:
-                        reported += 1
-                        if status == "uploaded":
-                            uploaded += 1
-                        elif status == "exists":
-                            skipped += 1
-                        else:
-                            failed += 1
-                        yield _sse({"type": "progress", "idx": reported, "total": total,
-                                    "file": fname, "status": status,
-                                    "uploaded": uploaded, "skipped": skipped, "failed": failed})
-
-                await asyncio.gather(*tasks)
-
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
-
+        Path(tmp_path).unlink(missing_ok=True)
         yield _sse({"type": "done", "uploaded": uploaded, "skipped": skipped,
-                    "failed": failed, "total": total})
+                    "failed": failed, "actTotal": act_total,
+                    "wellDone": well_total if wellness_records else 0})
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
