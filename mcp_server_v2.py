@@ -43,6 +43,18 @@ from strava_pipeline.analysis.effort_adjust import (
 from strava_pipeline.analysis.similarity import (
     find_similar, find_similar_by_stream, classify_run, classify_all, detect_anomalies,
 )
+from strava_pipeline.analysis.race_predict import (
+    predict_races, format_predictions, compute_vdot, DISTANCES,
+)
+from strava_pipeline.analysis.critical_speed import (
+    fit_from_pace_curve, format_critical_speed,
+)
+from strava_pipeline.analysis.injury_risk import (
+    assess_injury_risk, format_injury_risk,
+)
+from strava_pipeline.analysis.training_phase import (
+    build_training_weeks, detect_phases, format_phase_report,
+)
 
 
 # ── helpers ─────────────────────────────────────────────────
@@ -481,6 +493,101 @@ async def list_tools():
                 "recovery, fartlek) using pre-computed fingerprints. Shows what percentage of "
                 "training falls into each category, plus detects anomaly runs that don't match "
                 "any typical pattern. Great for training distribution analysis."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
+        Tool(
+            name="predict_race",
+            description=(
+                "Predict race finish times using three models (VDOT/Daniels, Riegel, Cameron). "
+                "Uses your best recent effort at any distance to predict all standard distances "
+                "(400m to marathon). Also computes 'marathon shape' — whether your training volume "
+                "and long run distance are sufficient for the target race. "
+                "Example: 'What could I run a 10K in?' or 'Am I ready for a half marathon?'"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "seed_distance": {
+                        "type": "string",
+                        "description": "Distance of the seed performance: '1K', 'Mile', '5K', '10K', 'Half', 'Marathon', or metres like '3000'",
+                    },
+                    "seed_time_secs": {
+                        "type": "number",
+                        "description": "Time in seconds for the seed performance (e.g. 1200 for 20:00)",
+                    },
+                    "auto": {
+                        "type": "boolean",
+                        "description": "If true, automatically use best recent effort from pace curves (ignores seed_distance/seed_time_secs)",
+                        "default": False,
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_critical_speed",
+            description=(
+                "Compute Critical Speed (CS) and D' — the 'FTP for runners'. "
+                "CS is the pace you can sustain for ~30-60 minutes. D' is your anaerobic "
+                "distance reserve above CS. Together they define your entire speed-duration curve "
+                "and training zones. Fitted from your best efforts at multiple distances. "
+                "Also shows predicted time-to-exhaustion at various paces above CS."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
+        Tool(
+            name="get_injury_risk",
+            description=(
+                "Evidence-based injury risk assessment. Analyses: "
+                "ACWR (acute:chronic workload ratio, sweet spot 0.8-1.3), "
+                "training monotony (repetitive load patterns), "
+                "session spikes (single runs much longer than recent max), "
+                "ramp rate (week-over-week volume increase), "
+                "consecutive hard days without recovery. "
+                "Returns a risk score (0-100) with specific flags and recommendations."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Days of history to analyse (default 42, minimum 28)",
+                        "default": 42,
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_training_phase",
+            description=(
+                "Auto-detect your current training phase: BASE (aerobic building), BUILD (adding intensity), "
+                "PEAK (race-specific sharpening), TAPER (reducing volume pre-race), RECOVERY, or MAINTENANCE. "
+                "Analyses volume trends, intensity distribution, CTL/ATL/TSB, and interval frequency "
+                "over recent weeks. Shows phase history and weekly summary table."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "weeks": {
+                        "type": "integer",
+                        "description": "Number of weeks to analyse (default 12)",
+                        "default": 12,
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_routes",
+            description=(
+                "List your recurring running routes with activity counts. "
+                "Shows which routes you run most often and when you last ran them. "
+                "Use this to find routes for performance comparison over time."
             ),
             inputSchema={
                 "type": "object",
@@ -1795,7 +1902,56 @@ async def _get_effort_adjusted(args: dict) -> str:
 
 
 async def _get_activity_weather(c, activity_id: str, act: dict) -> dict | None:
-    """Helper: fetch weather for an activity using its latlng stream."""
+    """Helper: get weather for an activity.
+
+    Priority:
+    1. intervals.icu built-in weather fields (already on the activity object)
+    2. intervals.icu weather-summary endpoint
+    3. Fallback to external weather API via latlng
+    """
+    # 1. Check if activity already has weather fields from intervals.icu
+    if act.get("has_weather") or act.get("average_weather_temp") is not None:
+        temp = act.get("average_weather_temp")
+        feels = act.get("average_feels_like", temp)
+        wind = act.get("average_wind_speed", 0)
+        humidity = None  # intervals.icu doesn't expose humidity directly
+        # Estimate dew point from feels_like vs actual temp
+        dp = None
+        if temp is not None and feels is not None and feels < temp:
+            dp = feels - 2  # rough approximation
+        return {
+            "temp_c": temp,
+            "feels_like_c": feels,
+            "dew_point_c": dp,
+            "humidity_pct": humidity,
+            "wind_kmh": (wind or 0) * 3.6 if wind else 0,  # m/s to km/h
+            "description": "",
+            "running_impact": _weather_impact_str(temp, dp),
+            "source": "intervals.icu",
+        }
+
+    # 2. Try intervals.icu weather-summary endpoint
+    try:
+        ws = await c.get_weather_summary(activity_id)
+        if ws and isinstance(ws, dict):
+            temp = ws.get("avgTemp") or ws.get("temp")
+            feels = ws.get("avgFeelsLike") or ws.get("feelsLike", temp)
+            wind = ws.get("avgWindSpeed") or ws.get("windSpeed", 0)
+            dp = ws.get("avgDewPoint") or ws.get("dewPoint")
+            return {
+                "temp_c": temp,
+                "feels_like_c": feels,
+                "dew_point_c": dp,
+                "humidity_pct": ws.get("humidity"),
+                "wind_kmh": (wind or 0) * 3.6 if wind else 0,
+                "description": ws.get("description", ""),
+                "running_impact": _weather_impact_str(temp, dp),
+                "source": "intervals.icu",
+            }
+    except Exception:
+        pass
+
+    # 3. Fallback to external weather API
     try:
         streams = await c.get_streams(activity_id, types=["latlng"])
         lat, lon = None, None
@@ -1816,6 +1972,23 @@ async def _get_activity_weather(c, activity_id: str, act: dict) -> dict | None:
     except Exception:
         pass
     return None
+
+
+def _weather_impact_str(temp_c: float | None, dew_point_c: float | None) -> str:
+    """Quick weather impact label."""
+    if temp_c is None:
+        return "Unknown conditions"
+    if temp_c < 0:
+        return "Cold — expect slight pace impact from cold air"
+    if temp_c < 8:
+        return "Cool — near-ideal conditions"
+    if temp_c < 15:
+        return "Mild — good running conditions"
+    if dew_point_c is not None and dew_point_c > 18:
+        return f"Warm & humid (DP {dew_point_c:.0f}°C) — expect significant pace impact"
+    if temp_c < 22:
+        return "Warm — moderate heat impact"
+    return f"Hot ({temp_c:.0f}°C) — significant pace degradation expected"
 
 
 async def _compare_runs(args: dict) -> str:
@@ -2301,6 +2474,239 @@ async def _get_planned_workouts(args: dict) -> str:
     return "\n".join(lines)
 
 
+async def _predict_race(args: dict) -> str:
+    """Race prediction from best efforts or manual seed."""
+    auto = args.get("auto", False)
+
+    async with _client() as c:
+        # Get recent activities for weekly volume / readiness
+        oldest = date.today() - timedelta(days=56)
+        activities = await c.list_activities(oldest=oldest)
+        runs = [a for a in activities if _is_run(a)]
+
+        if auto or (not args.get("seed_distance") and not args.get("seed_time_secs")):
+            # Use best effort from pace curves
+            try:
+                curves = await c.get_athlete_pace_curves(gap=False, days_back=90)
+            except Exception:
+                curves = {}
+
+            # Find best effort in the 2-30 min range
+            best_dist = None
+            best_time = None
+            best_vdot = 0
+
+            if isinstance(curves, dict):
+                for curve_data in curves.values():
+                    if not isinstance(curve_data, list):
+                        continue
+                    for pt in curve_data:
+                        d = pt.get("distance") or pt.get("x", 0)
+                        t = pt.get("secs") or pt.get("y", 0)
+                        if not d or not t or t < 120 or t > 1800:
+                            continue
+                        try:
+                            v = compute_vdot(float(d), float(t))
+                        except Exception:
+                            continue
+                        if v > best_vdot:
+                            best_vdot = v
+                            best_dist = float(d)
+                            best_time = float(t)
+            elif isinstance(curves, list):
+                for pt in curves:
+                    d = pt.get("distance") or pt.get("x", 0)
+                    t = pt.get("secs") or pt.get("y", 0)
+                    if not d or not t or t < 120 or t > 1800:
+                        continue
+                    try:
+                        v = compute_vdot(float(d), float(t))
+                    except Exception:
+                        continue
+                    if v > best_vdot:
+                        best_vdot = v
+                        best_dist = float(d)
+                        best_time = float(t)
+
+            if not best_dist:
+                return "Could not find suitable best efforts in recent pace curves. Try providing a seed manually."
+
+            seed_distance_m = best_dist
+            seed_time_secs = best_time
+        else:
+            # Manual seed
+            sd = args.get("seed_distance", "5K")
+            seed_distance_m = DISTANCES.get(sd, None)
+            if seed_distance_m is None:
+                try:
+                    seed_distance_m = float(sd)
+                except ValueError:
+                    return f"Unknown distance '{sd}'. Use: {', '.join(DISTANCES.keys())} or a number in metres."
+            seed_time_secs = float(args.get("seed_time_secs", 0))
+            if seed_time_secs <= 0:
+                return "Please provide seed_time_secs (e.g. 1200 for 20:00)."
+
+    # Weekly distances for readiness
+    from collections import defaultdict
+    weekly_km: dict[str, float] = defaultdict(float)
+    longest_km = 0.0
+    for r in runs:
+        dt_str = (r.get("start_date_local") or "")[:10]
+        if not dt_str:
+            continue
+        d = date.fromisoformat(dt_str)
+        week_start = d - timedelta(days=d.weekday())
+        dist_km = (r.get("distance") or r.get("icu_distance") or 0) / 1000
+        weekly_km[str(week_start)] += dist_km
+        longest_km = max(longest_km, dist_km)
+
+    weekly_list = [v for _, v in sorted(weekly_km.items())]
+
+    result = predict_races(
+        seed_distance_m=seed_distance_m,
+        seed_time_secs=seed_time_secs,
+        weekly_distances_km=weekly_list[-8:] if weekly_list else None,
+        longest_run_km=longest_km,
+    )
+    return format_predictions(result)
+
+
+async def _get_critical_speed(args: dict) -> str:
+    """Compute Critical Speed and D' from pace curves."""
+    async with _client() as c:
+        try:
+            curves = await c.get_athlete_pace_curves(gap=False, days_back=90)
+        except Exception as e:
+            return f"Could not fetch pace curves: {e}"
+
+    # Extract distance-time pairs from curves
+    pace_points = []
+    if isinstance(curves, dict):
+        for curve_data in curves.values():
+            if isinstance(curve_data, list):
+                for pt in curve_data:
+                    pace_points.append(pt)
+    elif isinstance(curves, list):
+        pace_points = curves
+
+    if not pace_points:
+        return "No pace curve data available. Need at least 3 best efforts between 2-30 min duration."
+
+    result = fit_from_pace_curve(pace_points)
+    return format_critical_speed(result)
+
+
+async def _get_injury_risk(args: dict) -> str:
+    """Assess injury risk from recent training data."""
+    days = max(args.get("days", 42), 28)
+    oldest = date.today() - timedelta(days=days)
+
+    async with _client() as c:
+        activities = await c.list_activities(oldest=oldest)
+        wellness = await c.get_wellness(oldest=oldest)
+
+    runs = [a for a in activities if _is_run(a)]
+    if not runs:
+        return "No runs found in the analysis period."
+
+    # Build daily loads (0 for rest days)
+    daily_loads: dict[str, float] = {}
+    for d_offset in range(days):
+        day = oldest + timedelta(days=d_offset)
+        daily_loads[str(day)] = 0.0
+
+    activity_distances: list[float] = []
+    activity_dates: list[date] = []
+
+    for r in sorted(runs, key=lambda x: x.get("start_date_local", "")):
+        dt_str = (r.get("start_date_local") or "")[:10]
+        if not dt_str:
+            continue
+        load = r.get("icu_training_load") or 0
+        dist_km = (r.get("distance") or r.get("icu_distance") or 0) / 1000
+        daily_loads[dt_str] = daily_loads.get(dt_str, 0) + load
+        try:
+            activity_dates.append(date.fromisoformat(dt_str))
+            activity_distances.append(dist_km)
+        except ValueError:
+            pass
+
+    daily_load_list = [daily_loads[k] for k in sorted(daily_loads.keys())]
+
+    # Weekly distances
+    from collections import defaultdict
+    weekly_km: dict[str, float] = defaultdict(float)
+    for r in runs:
+        dt_str = (r.get("start_date_local") or "")[:10]
+        if not dt_str:
+            continue
+        d = date.fromisoformat(dt_str)
+        week_start = d - timedelta(days=d.weekday())
+        weekly_km[str(week_start)] += (r.get("distance") or r.get("icu_distance") or 0) / 1000
+
+    weekly_list = [v for _, v in sorted(weekly_km.items())]
+
+    report = assess_injury_risk(
+        daily_loads=daily_load_list,
+        activity_distances_km=activity_distances,
+        activity_dates=activity_dates,
+        weekly_distances=weekly_list if weekly_list else None,
+    )
+    return format_injury_risk(report)
+
+
+async def _get_training_phase(args: dict) -> str:
+    """Detect current training phase and show history."""
+    num_weeks = args.get("weeks", 12)
+    days = num_weeks * 7
+    oldest = date.today() - timedelta(days=days)
+
+    async with _client() as c:
+        activities = await c.list_activities(oldest=oldest)
+        wellness = await c.get_wellness(oldest=oldest)
+
+    runs = [a for a in activities if _is_run(a)]
+    if not runs:
+        return "No runs found in the analysis period."
+
+    wellness_list = wellness if isinstance(wellness, list) else []
+    weeks = build_training_weeks(runs, wellness_list)
+
+    if not weeks:
+        return "Could not build weekly summaries from activity data."
+
+    report = detect_phases(weeks)
+    return format_phase_report(report)
+
+
+async def _get_routes(args: dict) -> str:
+    """List recurring routes."""
+    async with _client() as c:
+        try:
+            routes = await c.get_routes()
+        except Exception as e:
+            return f"Could not fetch routes: {e}"
+
+    if not routes:
+        return "No routes found. Routes are auto-detected by intervals.icu when you run the same course multiple times."
+
+    lines = ["# Your Routes", ""]
+    for r in routes:
+        name = r.get("name", "Unnamed route")
+        count = r.get("activity_count") or r.get("activityCount") or 0
+        dist = r.get("distance") or 0
+        route_id = r.get("id", "")
+        lines.append(f"### {name} [{route_id}]")
+        parts = []
+        if dist:
+            parts.append(fmt_distance(dist))
+        parts.append(f"{count} runs")
+        lines.append(" | ".join(parts))
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 # ── handler dispatch ────────────────────────────────────────
 
 _HANDLERS = {
@@ -2326,6 +2732,11 @@ _HANDLERS = {
     "query_run_profiles": _query_run_profiles,
     "find_similar_runs": _find_similar_runs,
     "classify_my_runs": _classify_my_runs,
+    "predict_race": _predict_race,
+    "get_critical_speed": _get_critical_speed,
+    "get_injury_risk": _get_injury_risk,
+    "get_training_phase": _get_training_phase,
+    "get_routes": _get_routes,
 }
 
 

@@ -308,3 +308,37 @@ class ICUClient:
         if newest:
             params["newest"] = str(newest)
         return await self._get(f"{self._ath()}/events", params)
+
+    # ── routes ──────────────────────────────────────────────
+
+    async def get_routes(self) -> list[dict]:
+        """List all routes with activity counts."""
+        return await self._get(f"{self._ath()}/routes")
+
+    async def get_route(self, route_id: str) -> dict:
+        """Get a specific route."""
+        return await self._get(f"{self._ath()}/routes/{route_id}")
+
+    # ── weather ─────────────────────────────────────────────
+
+    async def get_weather_summary(self, activity_id: str) -> dict:
+        """Weather conditions for an activity (from intervals.icu)."""
+        return await self._get(f"/activity/{activity_id}/weather-summary")
+
+    # ── athlete-level best efforts over time ────────────────
+
+    async def get_athlete_hr_curves(
+        self,
+        sport: str = "Run",
+        days_back: int = 365,
+    ) -> dict:
+        """All-time best HR curves."""
+        newest = date.today()
+        return await self._get(
+            f"{self._ath()}/hr-curves.json",
+            {
+                "type": sport,
+                "newest": str(newest),
+                "curves": f"all:{days_back}d",
+            },
+        )
