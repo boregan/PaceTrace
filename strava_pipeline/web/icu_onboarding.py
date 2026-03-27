@@ -9,11 +9,12 @@ Pages:
 
 import asyncio
 import io
+import json
 import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, Request, Form, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 import httpx
 
 from ..db.users import upsert_user, get_user
@@ -274,7 +275,7 @@ async function handleFile(file) {{
 
     dropzone.style.display = 'none';
     progress.style.display = 'block';
-    progressText.textContent = `Uploading ${{file.name}} (${{(file.size / 1024 / 1024).toFixed(1)}} MB)...`;
+    progressText.textContent = `Reading ${{file.name}} (${{(file.size / 1024 / 1024).toFixed(1)}} MB)...`;
     progressLog.textContent = '';
 
     const formData = new FormData();
@@ -282,20 +283,47 @@ async function handleFile(file) {{
     formData.append('username', USERNAME);
 
     try {{
-        const resp = await fetch('/v2/upload', {{
-            method: 'POST',
-            body: formData,
-        }});
-        const result = await resp.json();
+        const resp = await fetch('/v2/upload', {{ method: 'POST', body: formData }});
+        if (!resp.ok || !resp.body) {{
+            const err = await resp.json().catch(() => ({{error: 'Upload failed'}}));
+            throw new Error(err.error || `HTTP ${{resp.status}}`);
+        }}
 
-        if (result.success) {{
-            progressFill.style.width = '100%';
-            progressText.textContent = `Done! ${{result.uploaded}} uploaded, ${{result.skipped}} already existed, ${{result.failed}} failed`;
-            progressLog.textContent = result.log;
-        }} else {{
-            progressText.textContent = `Error: ${{result.error}}`;
-            progressFill.style.background = '#ff3333';
-            progressFill.style.width = '100%';
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {{
+            const {{ done, value }} = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, {{ stream: true }});
+
+            // Parse complete SSE events from buffer
+            const lines = buf.split('\n\n');
+            buf = lines.pop(); // Keep incomplete last chunk
+
+            for (const chunk of lines) {{
+                const dataLine = chunk.split('\n').find(l => l.startsWith('data: '));
+                if (!dataLine) continue;
+                let evt;
+                try {{ evt = JSON.parse(dataLine.slice(6)); }} catch {{ continue; }}
+
+                if (evt.type === 'start') {{
+                    progressText.textContent = `Uploading ${{evt.total}} activities...`;
+
+                }} else if (evt.type === 'progress') {{
+                    const pct = Math.round((evt.idx / evt.total) * 100);
+                    progressFill.style.width = pct + '%';
+                    progressText.textContent = `${{evt.idx}}/${{evt.total}} — ${{evt.uploaded}} uploaded, ${{evt.skipped}} already existed, ${{evt.failed}} failed`;
+                    const icon = evt.status === 'uploaded' ? '✓' : evt.status === 'exists' ? '—' : '✗';
+                    progressLog.textContent += `${{icon}} ${{evt.file}} (${{evt.status}})\n`;
+                    progressLog.scrollTop = progressLog.scrollHeight;
+
+                }} else if (evt.type === 'done') {{
+                    progressFill.style.width = '100%';
+                    progressText.textContent = `Done! ${{evt.uploaded}} uploaded, ${{evt.skipped}} already existed, ${{evt.failed}} failed`;
+                }}
+            }}
         }}
     }} catch (e) {{
         progressText.textContent = `Upload failed: ${{e.message}}`;
@@ -379,14 +407,18 @@ async def connect_submit(
     return HTMLResponse(html)
 
 
+def _sse(data: dict) -> str:
+    """Format a dict as an SSE event line."""
+    return f"data: {json.dumps(data)}\n\n"
+
+
 @router.post("/v2/upload")
 async def upload_history_export(
     username: str = Form(...),
     file: UploadFile = File(...),
 ):
-    """Accept a Garmin or Strava export ZIP and upload activities to intervals.icu."""
+    """Accept a Garmin or Strava export ZIP, stream SSE progress back as it uploads."""
 
-    # Get user's intervals.icu credentials
     user = get_user(username)
     if not user or not user.get("icu_api_key"):
         return JSONResponse(
@@ -396,7 +428,7 @@ async def upload_history_export(
 
     api_key = user["icu_api_key"]
 
-    # Read the ZIP into memory (limit 500MB)
+    # Read ZIP into memory (limit 500MB)
     try:
         content = await file.read()
         if len(content) > 500 * 1024 * 1024:
@@ -411,10 +443,8 @@ async def upload_history_export(
             status_code=400,
         )
 
-    # Find all activity files — handles both Garmin (nested dirs) and Strava (flat) exports
+    # Collect activity files (Garmin nested dirs + nested ZIPs)
     activity_files = sorted([n for n in zf.namelist() if _is_activity_file(n)])
-
-    # Also check for nested ZIPs (Garmin sometimes nests activity ZIPs)
     nested_zip_data: list[tuple[str, bytes]] = []
     for name in zf.namelist():
         if name.lower().endswith(".zip"):
@@ -423,13 +453,10 @@ async def upload_history_export(
                 inner_zf = zipfile.ZipFile(io.BytesIO(inner_bytes))
                 for inner_name in inner_zf.namelist():
                     if _is_activity_file(inner_name):
-                        nested_zip_data.append((
-                            Path(inner_name).name,
-                            inner_zf.read(inner_name),
-                        ))
+                        nested_zip_data.append((Path(inner_name).name, inner_zf.read(inner_name)))
                 inner_zf.close()
             except Exception:
-                pass  # Skip corrupt nested ZIPs
+                pass
 
     if not activity_files and not nested_zip_data:
         return JSONResponse(
@@ -439,56 +466,56 @@ async def upload_history_export(
 
     total = len(activity_files) + len(nested_zip_data)
 
-    # Upload each file to intervals.icu
-    uploaded = 0
-    skipped = 0
-    failed = 0
-    log_lines = []
-    idx = 0
+    async def _stream():
+        yield _sse({"type": "start", "total": total})
 
-    async with httpx.AsyncClient(
-        base_url="https://intervals.icu/api/v1",
-        auth=httpx.BasicAuth("API_KEY", api_key),
-        timeout=30.0,
-    ) as client:
+        uploaded = skipped = failed = idx = 0
 
-        async def _upload(fname: str, file_bytes: bytes):
-            nonlocal uploaded, skipped, failed, idx
-            idx += 1
-            try:
-                resp = await client.post(
-                    "/athlete/0/activities",
-                    files={"file": (fname, file_bytes)},
-                )
-                if resp.status_code in (200, 201):
-                    uploaded += 1
-                    log_lines.append(f"[{idx}/{total}] {fname} — uploaded")
-                elif resp.status_code == 409:
-                    skipped += 1
-                    log_lines.append(f"[{idx}/{total}] {fname} — already exists")
-                else:
+        async with httpx.AsyncClient(
+            base_url="https://intervals.icu/api/v1",
+            auth=httpx.BasicAuth("API_KEY", api_key),
+            timeout=30.0,
+        ) as client:
+
+            async def _upload(fname: str, file_bytes: bytes):
+                nonlocal uploaded, skipped, failed, idx
+                idx += 1
+                try:
+                    resp = await client.post(
+                        "/athlete/0/activities",
+                        files={"file": (fname, file_bytes)},
+                    )
+                    if resp.status_code in (200, 201):
+                        uploaded += 1
+                        status = "uploaded"
+                    elif resp.status_code == 409:
+                        skipped += 1
+                        status = "exists"
+                    else:
+                        failed += 1
+                        status = f"error {resp.status_code}"
+                except Exception as e:
                     failed += 1
-                    log_lines.append(f"[{idx}/{total}] {fname} — error {resp.status_code}")
-            except Exception as e:
-                failed += 1
-                log_lines.append(f"[{idx}/{total}] {fname} — {e}")
+                    status = str(e)[:80]
 
-            await asyncio.sleep(0.5)
+                return status
 
-        # Upload from main ZIP
-        for name in activity_files:
-            fname = Path(name).name
-            await _upload(fname, zf.read(name))
+            for name in activity_files:
+                fname = Path(name).name
+                status = await _upload(fname, zf.read(name))
+                yield _sse({"type": "progress", "idx": idx, "total": total,
+                            "file": fname, "status": status,
+                            "uploaded": uploaded, "skipped": skipped, "failed": failed})
+                await asyncio.sleep(0.3)
 
-        # Upload from nested ZIPs
-        for fname, file_bytes in nested_zip_data:
-            await _upload(fname, file_bytes)
+            for fname, file_bytes in nested_zip_data:
+                status = await _upload(fname, file_bytes)
+                yield _sse({"type": "progress", "idx": idx, "total": total,
+                            "file": fname, "status": status,
+                            "uploaded": uploaded, "skipped": skipped, "failed": failed})
+                await asyncio.sleep(0.3)
 
-    return JSONResponse({
-        "success": True,
-        "uploaded": uploaded,
-        "skipped": skipped,
-        "failed": failed,
-        "total": total,
-        "log": "\n".join(log_lines),
-    })
+        yield _sse({"type": "done", "uploaded": uploaded, "skipped": skipped,
+                    "failed": failed, "total": total})
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
