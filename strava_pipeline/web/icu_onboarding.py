@@ -26,16 +26,19 @@ router = APIRouter()
 
 SUPPORTED_EXTENSIONS = {".fit", ".gpx", ".tcx", ".fit.gz", ".gpx.gz", ".tcx.gz"}
 
-# Garmin exports mix activity FIT files with health/wellness FIT files.
-# Health files are named like "user@email.com_1234567890.fit" — skip them.
-# Activity files live in an "Activities" folder or have a timestamp-style name.
 def _is_activity_file(name: str) -> bool:
     lower = name.lower()
-    if not any(lower.endswith(ext) for ext in SUPPORTED_EXTENSIONS):
+    return any(lower.endswith(ext) for ext in SUPPORTED_EXTENSIONS)
+
+
+def _is_activity_file_direct(name: str) -> bool:
+    """For files directly in the main ZIP — skip Garmin health snapshots.
+    These are named user@email.com_XXXX.fit and are wellness data, not activities.
+    Actual activity FIT files live inside nested ZIPs."""
+    if not _is_activity_file(name):
         return False
-    basename = Path(name).name
-    # Skip Garmin health/wellness snapshots (contain email address)
-    if "@" in basename:
+    # Skip Garmin health/wellness FIT files (contain @ — email-prefixed filenames)
+    if "@" in Path(name).name:
         return False
     return True
 
@@ -487,7 +490,7 @@ async def upload_history_export(
         return JSONResponse({"success": False, "error": f"Invalid ZIP file: {e}"}, status_code=400)
 
     # Collect activity files (Garmin nested dirs + nested ZIPs)
-    activity_files = sorted([n for n in zf.namelist() if _is_activity_file(n)])
+    activity_files = sorted([n for n in zf.namelist() if _is_activity_file_direct(n)])
     nested_zip_data: list[tuple[str, bytes]] = []
     for name in zf.namelist():
         if name.lower().endswith(".zip"):
@@ -501,11 +504,18 @@ async def upload_history_export(
             except Exception:
                 pass
 
-    if not activity_files and not nested_zip_data:
+    # Parse wellness data before the early-exit check — a ZIP with only wellness
+    # data (no activities) should still be importable
+    try:
+        wellness_records = build_wellness_records(zf)
+    except Exception:
+        wellness_records = []
+
+    if not activity_files and not nested_zip_data and not wellness_records:
         zf.close()
         Path(tmp_path).unlink(missing_ok=True)
         return JSONResponse(
-            {"success": False, "error": "No activity files (FIT/GPX/TCX) found in the ZIP"},
+            {"success": False, "error": "No activity or wellness data found in the ZIP"},
             status_code=400,
         )
 
@@ -514,12 +524,6 @@ async def upload_history_export(
     for name in activity_files:
         all_files.append((Path(name).name, zf.read(name)))
     all_files.extend(nested_zip_data)
-
-    # Parse wellness data (sleep, HR, steps, body battery) from the same ZIP
-    try:
-        wellness_records = build_wellness_records(zf)
-    except Exception:
-        wellness_records = []
 
     zf.close()
 
