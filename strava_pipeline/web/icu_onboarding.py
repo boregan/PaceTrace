@@ -196,14 +196,21 @@ SUCCESS_HTML = """
             <span class="phase-title">Add to Claude</span>
         </div>
         <div class="section">
-            <a class="add-btn" href="https://claude.ai/settings/integrations/new?url={base_url}/v2/mcp/sse%3Fuser%3D{username}&name=PaceTrace" target="_blank">
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="8.5" stroke="white" stroke-opacity="0.4"/><path d="M9 5v4l2.5 2.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>
-                Add PaceTrace to Claude
+            <p style="color:#999;font-size:14px;margin-bottom:12px">
+                Copy this URL, then go to
+                <a href="https://claude.ai/settings/integrations" target="_blank" style="color:#ff4500">Claude → Settings → Integrations</a>
+                → <b style="color:#ccc">Add Integration</b>.
+            </p>
+            <div class="config" id="mcp-url" onclick="
+                navigator.clipboard.writeText('{base_url}/v2/mcp/sse?user={username}');
+                this.querySelector('.copy-hint').textContent='Copied!';
+                setTimeout(()=>this.querySelector('.copy-hint').textContent='click to copy',2000);
+                this.style.borderColor='#4caf50';
+                setTimeout(()=>this.style.borderColor='',2000);
+            ">{base_url}/v2/mcp/sse?user={username}<span class="copy-hint" style="position:absolute;right:8px;top:8px;font-size:10px;color:#666;font-family:-apple-system,system-ui,sans-serif">click to copy</span></div>
+            <a class="add-btn" href="https://claude.ai/settings/integrations" target="_blank" style="margin-top:8px">
+                Open Claude Integrations →
             </a>
-            <div class="note" style="margin-top:12px">
-                Or paste this URL manually at <a href="https://claude.ai/settings/integrations" target="_blank">claude.ai → Settings → Integrations</a>:<br><br>
-                <div class="config" onclick="navigator.clipboard.writeText(this.dataset.url); this.style.borderColor='#4caf50'; setTimeout(()=>this.style.borderColor='',1500)" data-url="{base_url}/v2/mcp/sse?user={username}">{base_url}/v2/mcp/sse?user={username}</div>
-            </div>
         </div>
     </div>
 
@@ -405,8 +412,8 @@ async def connect_submit(
         icu_api_key=api_key.strip(),
     )
 
-    # Build success page
-    base_url = str(request.base_url).rstrip("/")
+    # Build success page — force https when behind Fly.io proxy
+    base_url = str(request.base_url).rstrip("/").replace("http://", "https://")
 
     html = SUCCESS_HTML.format(
         display_name=name or display_name,
