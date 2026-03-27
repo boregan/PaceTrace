@@ -165,6 +165,9 @@ SUCCESS_HTML = """
         .section h3 {{ font-size: 14px; color: #999; margin-bottom: 8px; }}
         .note {{ background: #111; border: 1px solid #333; border-radius: 8px; padding: 14px; font-size: 13px; color: #888; line-height: 1.6; margin-top: 12px; }}
         .optional {{ display: inline-block; background: #2a2a1a; color: #ff9800; font-size: 11px; padding: 2px 8px; border-radius: 4px; margin-left: 8px; }}
+        .add-btn {{ display: inline-flex; align-items: center; gap: 8px; background: #ff4500; color: #fff; border: none; border-radius: 8px; padding: 12px 20px; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; transition: background 0.2s; margin: 8px 0; }}
+        .add-btn:hover {{ background: #cc3700; }}
+        .add-btn svg {{ flex-shrink: 0; }}
 
         /* Drop zone */
         .dropzone {{ border: 2px dashed #333; border-radius: 12px; padding: 40px 20px; text-align: center; cursor: pointer; transition: all 0.2s; margin: 16px 0; }}
@@ -193,8 +196,14 @@ SUCCESS_HTML = """
             <span class="phase-title">Add to Claude</span>
         </div>
         <div class="section">
-            <h3>Claude (browser) — add as MCP integration</h3>
-            <div class="config" onclick="navigator.clipboard.writeText(this.innerText.replace('click to copy','').trim())">{base_url}/v2/mcp/sse?user={username}</div>
+            <a class="add-btn" href="https://claude.ai/settings/integrations/new?url={base_url}/v2/mcp/sse%3Fuser%3D{username}&name=PaceTrace" target="_blank">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="8.5" stroke="white" stroke-opacity="0.4"/><path d="M9 5v4l2.5 2.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>
+                Add PaceTrace to Claude
+            </a>
+            <div class="note" style="margin-top:12px">
+                Or paste this URL manually at <a href="https://claude.ai/settings/integrations" target="_blank">claude.ai → Settings → Integrations</a>:<br><br>
+                <div class="config" onclick="navigator.clipboard.writeText(this.dataset.url); this.style.borderColor='#4caf50'; setTimeout(()=>this.style.borderColor='',1500)" data-url="{base_url}/v2/mcp/sse?user={username}">{base_url}/v2/mcp/sse?user={username}</div>
+            </div>
         </div>
     </div>
 
@@ -299,11 +308,11 @@ async function handleFile(file) {{
             buf += decoder.decode(value, {{ stream: true }});
 
             // Parse complete SSE events from buffer
-            const lines = buf.split('\n\n');
+            const lines = buf.split('\\n\\n');
             buf = lines.pop(); // Keep incomplete last chunk
 
             for (const chunk of lines) {{
-                const dataLine = chunk.split('\n').find(l => l.startsWith('data: '));
+                const dataLine = chunk.split('\\n').find(l => l.startsWith('data: '));
                 if (!dataLine) continue;
                 let evt;
                 try {{ evt = JSON.parse(dataLine.slice(6)); }} catch {{ continue; }}
