@@ -473,6 +473,7 @@ async def upload_history_export(
         )
 
     api_key = user["icu_api_key"]
+    athlete_id = user.get("icu_athlete_id") or "0"
 
     # Stream upload to a temp file — avoids loading the whole ZIP into RAM
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
@@ -551,7 +552,7 @@ async def upload_history_export(
                     async with sem:
                         try:
                             resp = await client.post(
-                                "/athlete/0/activities",
+                                f"/athlete/{athlete_id}/activities",
                                 files={"file": (fname, file_bytes)},
                             )
                             status = ("uploaded" if resp.status_code in (200, 201)
@@ -594,7 +595,7 @@ async def upload_history_export(
                         batch = wellness_records[i: i + batch_size]
                         try:
                             resp = await client.put(
-                                "/athlete/0/wellness",
+                                f"/athlete/{athlete_id}/wellness",
                                 json=batch,
                                 headers={"Content-Type": "application/json"},
                             )
