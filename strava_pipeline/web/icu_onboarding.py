@@ -361,6 +361,10 @@ async function handleFile(file) {{
                     if (evt.skipped) summary += `, ${{evt.skipped}} already existed`;
                     if (evt.wellDone) summary += ` · ${{evt.wellDone}} days of sleep & health data imported`;
                     progressText.textContent = summary;
+
+                }} else if (evt.type === 'error') {{
+                    progressFill.style.background = '#ff3333';
+                    progressText.textContent = `⚠️ ${{evt.message}}`;
                 }}
             }}
         }}
@@ -523,83 +527,88 @@ async def upload_history_export(
     well_total = len(wellness_records)
 
     async def _stream():
-        yield _sse({"type": "start", "actTotal": act_total, "wellTotal": well_total})
-
-        # ── Phase 1: Activities ──────────────────────────────────────────────
         uploaded = skipped = failed = 0
-        sem = asyncio.Semaphore(5)
-        results: list[tuple[str, str]] = []
-        lock = asyncio.Lock()
+        well_uploaded = 0
+        try:
+            yield _sse({"type": "start", "actTotal": act_total, "wellTotal": well_total})
 
-        async with httpx.AsyncClient(
-            base_url="https://intervals.icu/api/v1",
-            auth=httpx.BasicAuth("API_KEY", api_key),
-            timeout=30.0,
-        ) as client:
+            # ── Phase 1: Activities ──────────────────────────────────────────
+            sem = asyncio.Semaphore(5)
+            results: list[tuple[str, str]] = []
+            lock = asyncio.Lock()
 
-            async def _upload_one(fname: str, file_bytes: bytes):
-                async with sem:
-                    try:
-                        resp = await client.post(
-                            "/athlete/0/activities",
-                            files={"file": (fname, file_bytes)},
-                        )
-                        status = ("uploaded" if resp.status_code in (200, 201)
-                                  else "exists" if resp.status_code == 409
-                                  else f"error {resp.status_code}")
-                    except Exception as e:
-                        status = str(e)[:60]
-                    async with lock:
-                        results.append((fname, status))
-
-            tasks = [asyncio.create_task(_upload_one(f, d)) for f, d in all_files]
-
-            reported = 0
-            while reported < act_total:
-                await asyncio.sleep(0.1)
-                async with lock:
-                    new = results[reported:]
-                for fname, status in new:
-                    reported += 1
-                    if status == "uploaded":
-                        uploaded += 1
-                    elif status == "exists":
-                        skipped += 1
-                    else:
-                        failed += 1
-                    yield _sse({"type": "activity", "idx": reported, "total": act_total,
-                                "file": fname, "status": status,
-                                "uploaded": uploaded, "skipped": skipped, "failed": failed})
-            await asyncio.gather(*tasks)
-
-        # ── Phase 2: Wellness (sleep / HR / steps) ───────────────────────────
-        if wellness_records:
-            yield _sse({"type": "wellness_start", "total": well_total})
-            well_done = 0
-            batch_size = 30
             async with httpx.AsyncClient(
                 base_url="https://intervals.icu/api/v1",
                 auth=httpx.BasicAuth("API_KEY", api_key),
                 timeout=30.0,
             ) as client:
-                for i in range(0, well_total, batch_size):
-                    batch = wellness_records[i: i + batch_size]
-                    try:
-                        resp = await client.put(
-                            "/athlete/0/wellness",
-                            json=batch,
-                            headers={"Content-Type": "application/json"},
-                        )
-                        ok = resp.status_code in (200, 201)
-                    except Exception:
-                        ok = False
-                    well_done += len(batch)
-                    yield _sse({"type": "wellness", "done": well_done, "total": well_total,
-                                "from": batch[0]["id"], "to": batch[-1]["id"], "ok": ok})
 
-        Path(tmp_path).unlink(missing_ok=True)
+                async def _upload_one(fname: str, file_bytes: bytes):
+                    async with sem:
+                        try:
+                            resp = await client.post(
+                                "/athlete/0/activities",
+                                files={"file": (fname, file_bytes)},
+                            )
+                            status = ("uploaded" if resp.status_code in (200, 201)
+                                      else "exists" if resp.status_code == 409
+                                      else f"error {resp.status_code}")
+                        except Exception as e:
+                            status = str(e)[:60]
+                        async with lock:
+                            results.append((fname, status))
+
+                tasks = [asyncio.create_task(_upload_one(f, d)) for f, d in all_files]
+                reported = 0
+                while reported < act_total:
+                    await asyncio.sleep(0.1)
+                    async with lock:
+                        new = results[reported:]
+                    for fname, status in new:
+                        reported += 1
+                        if status == "uploaded":
+                            uploaded += 1
+                        elif status == "exists":
+                            skipped += 1
+                        else:
+                            failed += 1
+                        yield _sse({"type": "activity", "idx": reported, "total": act_total,
+                                    "file": fname, "status": status,
+                                    "uploaded": uploaded, "skipped": skipped, "failed": failed})
+                await asyncio.gather(*tasks)
+
+            # ── Phase 2: Wellness (sleep / HR / steps) ───────────────────────
+            if wellness_records:
+                yield _sse({"type": "wellness_start", "total": well_total})
+                batch_size = 30
+                async with httpx.AsyncClient(
+                    base_url="https://intervals.icu/api/v1",
+                    auth=httpx.BasicAuth("API_KEY", api_key),
+                    timeout=30.0,
+                ) as client:
+                    for i in range(0, well_total, batch_size):
+                        batch = wellness_records[i: i + batch_size]
+                        try:
+                            resp = await client.put(
+                                "/athlete/0/wellness",
+                                json=batch,
+                                headers={"Content-Type": "application/json"},
+                            )
+                            ok = resp.status_code in (200, 201)
+                            if ok:
+                                well_uploaded += len(batch)
+                        except Exception:
+                            ok = False
+                        yield _sse({"type": "wellness", "done": i + len(batch),
+                                    "total": well_total, "from": batch[0]["id"],
+                                    "to": batch[-1]["id"], "ok": ok})
+
+        except Exception as e:
+            yield _sse({"type": "error", "message": str(e)[:120]})
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
         yield _sse({"type": "done", "uploaded": uploaded, "skipped": skipped,
-                    "failed": failed, "actTotal": act_total,
-                    "wellDone": well_total if wellness_records else 0})
+                    "failed": failed, "actTotal": act_total, "wellDone": well_uploaded})
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
