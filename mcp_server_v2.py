@@ -1731,7 +1731,7 @@ async def _find_similar_runs(args: dict) -> str:
 
     lines = [f"# Runs Similar to: {target_name}{stream_label}", ""]
 
-    target_type, target_reason = classify_run(target)
+    target_type, target_reason, _ = classify_run(target)
     lines.append(f"*Target run classified as: **{target_type}** — {target_reason}*")
     lines.append("")
 
@@ -1746,7 +1746,7 @@ async def _find_similar_runs(args: dict) -> str:
         cand_profile = next((p for p in profiles if p["activity_id"] == r.activity_id), None)
         run_type = ""
         if cand_profile:
-            rt, _ = classify_run(cand_profile)
+            rt = classify_run(cand_profile)[0]
             run_type = f" [{rt}]"
 
         sim_pct = f"{r.similarity:.0%}"
@@ -1768,14 +1768,14 @@ async def _classify_my_runs(args: dict) -> str:
 
     # Count by type
     from collections import Counter
-    type_counts = Counter(t for t, _, _ in classified)
+    type_counts = Counter(t for t, _, _, _ in classified)
     total = len(classified)
 
     lines = [f"# Training Classification ({total} runs profiled)", ""]
 
     # Distribution summary
     lines.append("## Distribution")
-    for run_type in ["easy", "recovery", "tempo", "interval", "fartlek", "race", "mixed"]:
+    for run_type in ["easy", "recovery", "tempo", "threshold", "interval", "fartlek", "race", "mixed"]:
         count = type_counts.get(run_type, 0)
         if count == 0:
             continue
@@ -1786,7 +1786,7 @@ async def _classify_my_runs(args: dict) -> str:
 
     # Training balance assessment
     easy_total = type_counts.get("easy", 0) + type_counts.get("recovery", 0)
-    hard_total = type_counts.get("tempo", 0) + type_counts.get("interval", 0) + type_counts.get("race", 0)
+    hard_total = type_counts.get("tempo", 0) + type_counts.get("threshold", 0) + type_counts.get("interval", 0) + type_counts.get("race", 0)
     easy_pct = (easy_total / total * 100) if total else 0
     hard_pct = (hard_total / total * 100) if total else 0
 
@@ -1804,7 +1804,7 @@ async def _classify_my_runs(args: dict) -> str:
     activity_names = {}
     try:
         async with _client() as c:
-            for _, p, _ in classified:
+            for _, p, _, _ in classified:
                 try:
                     act = await c.get_activity(p["activity_id"], intervals=False)
                     activity_names[p["activity_id"]] = {
@@ -1818,8 +1818,8 @@ async def _classify_my_runs(args: dict) -> str:
         pass
 
     # Show runs by type
-    for run_type in ["easy", "recovery", "tempo", "interval", "fartlek", "race", "mixed"]:
-        type_runs = [(p, reason) for t, p, reason in classified if t == run_type]
+    for run_type in ["easy", "recovery", "tempo", "threshold", "interval", "fartlek", "race", "mixed"]:
+        type_runs = [(p, reason) for t, p, reason, _ in classified if t == run_type]
         if not type_runs:
             continue
 

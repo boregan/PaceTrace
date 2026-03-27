@@ -71,6 +71,20 @@ class RunProfile:
     climb_score: float | None = None               # elevation gain per km
     max_gradient_pct: float | None = None          # steepest segment
 
+    # ── Stop context (for classification) ────
+    avg_stop_duration_secs: float | None = None    # avg duration per stop
+    stop_regularity: float | None = None           # CV of stop durations (low = structured)
+    hr_at_stop_onset_pct: float | None = None      # mean HR% at moment of each stop
+
+    # ── Intensity metrics ─────────────────────
+    pace_cv_moving: float | None = None            # pace CV excluding stopped time
+    intensity_factor: float | None = None          # avg_pace / threshold_pace
+    high_intensity_bouts: int = 0                  # segments where HR > 88% HRmax for >30s
+
+    # ── Classification ────────────────────────
+    run_type: str | None = None                    # auto-classified type
+    run_type_confidence: float | None = None       # 0-1 confidence
+
     # ── Effort / Intensity ──────────────────
     intensity_distribution: str = ""               # polarised/threshold/pyramidal/junk
     time_in_easy_pct: float | None = None          # % time in easy zone
@@ -173,6 +187,181 @@ def _detect_stops(cadence: list[float], time: list[float]) -> tuple[int, float]:
             total_stopped += stop_duration
 
     return stop_count, total_stopped
+
+
+@dataclass
+class StopInfo:
+    """Detailed stop information for classification."""
+    count: int
+    total_secs: float
+    avg_duration_secs: float
+    regularity: float | None  # CV of stop durations (None if < 2 stops)
+    hr_at_onset_pcts: list[float]  # HR as %HRmax at each stop onset
+
+
+def _detect_stops_detailed(
+    cadence: list[float],
+    time: list[float],
+    heartrate: list[float] | None = None,
+    max_hr: float = 185.0,
+) -> StopInfo:
+    """Detect stops with detailed per-stop metrics.
+
+    Like _detect_stops but also tracks individual stop durations and HR at onset.
+    """
+    if not cadence or not time or len(cadence) != len(time):
+        return StopInfo(count=0, total_secs=0.0, avg_duration_secs=0.0,
+                        regularity=None, hr_at_onset_pcts=[])
+
+    has_hr = heartrate is not None and len(heartrate) == len(cadence)
+
+    stop_durations: list[float] = []
+    hr_at_onset: list[float] = []
+    in_stop = False
+    stop_start = 0
+    stop_start_idx = 0
+
+    for i, (cad, t) in enumerate(zip(cadence, time)):
+        is_stopped = (cad is not None and cad < 10) or cad is None or cad == 0
+
+        if is_stopped and not in_stop:
+            in_stop = True
+            stop_start = t
+            stop_start_idx = i
+        elif not is_stopped and in_stop:
+            stop_duration = t - stop_start
+            if stop_duration >= 5:  # Only count stops > 5 seconds
+                stop_durations.append(stop_duration)
+                if has_hr and stop_start_idx < len(heartrate):
+                    hr_val = heartrate[stop_start_idx]
+                    if hr_val and hr_val > 0 and max_hr > 0:
+                        hr_at_onset.append((hr_val / max_hr) * 100.0)
+            in_stop = False
+
+    # Handle stop at end of run
+    if in_stop and time:
+        stop_duration = time[-1] - stop_start
+        if stop_duration >= 5:
+            stop_durations.append(stop_duration)
+            if has_hr and stop_start_idx < len(heartrate):
+                hr_val = heartrate[stop_start_idx]
+                if hr_val and hr_val > 0 and max_hr > 0:
+                    hr_at_onset.append((hr_val / max_hr) * 100.0)
+
+    count = len(stop_durations)
+    total_secs = sum(stop_durations)
+    avg_dur = (total_secs / count) if count > 0 else 0.0
+
+    # CV of stop durations (regularity)
+    regularity: float | None = None
+    if count >= 2:
+        mean_dur = statistics.mean(stop_durations)
+        if mean_dur > 0:
+            regularity = statistics.stdev(stop_durations) / mean_dur
+
+    return StopInfo(
+        count=count,
+        total_secs=total_secs,
+        avg_duration_secs=round(avg_dur, 1),
+        regularity=round(regularity, 4) if regularity is not None else None,
+        hr_at_onset_pcts=hr_at_onset,
+    )
+
+
+def _compute_pace_cv_moving(
+    velocity: list[float],
+    time: list[float],
+    min_speed: float = 1.0,
+) -> float | None:
+    """Compute pace CV from speed data, excluding stopped/near-stopped points.
+
+    Applies a 10-second rolling average to smooth GPS noise before computing CV.
+    Points with speed < min_speed are excluded.
+    """
+    if not velocity or not time or len(velocity) != len(time):
+        return None
+
+    # Filter to moving points only
+    moving = [(t, v) for t, v in zip(time, velocity)
+              if v is not None and v >= min_speed]
+    if len(moving) < 10:
+        return None
+
+    # Apply 10-second rolling average
+    smoothed: list[float] = []
+    for i, (t_i, _) in enumerate(moving):
+        window_vals = []
+        for j in range(max(0, i - 10), min(len(moving), i + 11)):
+            t_j = moving[j][0]
+            if abs(t_j - t_i) <= 5.0:  # within +/- 5s = 10s window
+                window_vals.append(moving[j][1])
+        if window_vals:
+            smoothed.append(statistics.mean(window_vals))
+
+    if len(smoothed) < 5:
+        return None
+
+    mean_v = statistics.mean(smoothed)
+    if mean_v <= 0:
+        return None
+
+    return round(statistics.stdev(smoothed) / mean_v, 4)
+
+
+def _count_high_intensity_bouts(
+    heartrate: list[float],
+    time: list[float],
+    max_hr: float = 185.0,
+    threshold_pct: float = 0.88,
+    min_duration_secs: float = 30.0,
+) -> int:
+    """Count segments where HR exceeds threshold_pct of max_hr for at least min_duration_secs."""
+    if not heartrate or not time or len(heartrate) != len(time):
+        return 0
+
+    hr_thresh = max_hr * threshold_pct
+    bout_count = 0
+    bout_start: float | None = None
+
+    for i, (hr, t) in enumerate(zip(heartrate, time)):
+        if hr is not None and hr >= hr_thresh:
+            if bout_start is None:
+                bout_start = t
+        else:
+            if bout_start is not None:
+                if t - bout_start >= min_duration_secs:
+                    bout_count += 1
+                bout_start = None
+
+    # Handle bout at end of data
+    if bout_start is not None and time:
+        if time[-1] - bout_start >= min_duration_secs:
+            bout_count += 1
+
+    return bout_count
+
+
+def _compute_intensity_factor(
+    velocity: list[float],
+    threshold_speed: float = 3.33,
+    min_speed: float = 1.0,
+) -> float | None:
+    """Intensity Factor = avg moving speed / threshold speed.
+
+    Only includes points where speed >= min_speed (i.e. actually moving).
+    """
+    if not velocity:
+        return None
+
+    moving_speeds = [v for v in velocity if v is not None and v >= min_speed]
+    if len(moving_speeds) < 10:
+        return None
+
+    if threshold_speed <= 0:
+        return None
+
+    avg_moving = statistics.mean(moving_speeds)
+    return round(avg_moving / threshold_speed, 3)
 
 
 def _compute_km_splits(distance: list[float], time: list[float],
@@ -490,8 +679,38 @@ def compute_profile(
         if profile.cadence_cv is not None:
             profile.cadence_cv = round(profile.cadence_cv, 4)
 
-    # Stop detection
+    # Stop detection (basic)
     profile.stop_count, profile.total_stopped_secs = _detect_stops(cadence, time)
+
+    # Stop detection (detailed — for classification)
+    max_hr_for_stops = 185.0
+    if valid_hr:
+        all_hr_vals = [h for _, h in valid_hr]
+        max_hr_for_stops = max(all_hr_vals)
+
+    stop_info = _detect_stops_detailed(
+        cadence, time, heartrate=heartrate, max_hr=max_hr_for_stops,
+    )
+    profile.avg_stop_duration_secs = stop_info.avg_duration_secs if stop_info.count > 0 else None
+    profile.stop_regularity = stop_info.regularity
+    if stop_info.hr_at_onset_pcts:
+        profile.hr_at_stop_onset_pct = round(
+            statistics.mean(stop_info.hr_at_onset_pcts), 1
+        )
+
+    # ── Moving pace CV ────────────────────────────────
+    profile.pace_cv_moving = _compute_pace_cv_moving(velocity, time)
+
+    # ── High-intensity bouts ──────────────────────────
+    profile.high_intensity_bouts = _count_high_intensity_bouts(
+        heartrate, time, max_hr=max_hr_for_stops,
+    )
+
+    # ── Intensity factor ──────────────────────────────
+    threshold_speed = 3.33  # default 5:00/km
+    if activity_data and "threshold_pace" in activity_data:
+        threshold_speed = activity_data["threshold_pace"]
+    profile.intensity_factor = _compute_intensity_factor(velocity, threshold_speed)
 
     # ── Elevation metrics ──────────────────────────────
 

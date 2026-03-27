@@ -164,110 +164,184 @@ def find_similar_by_stream(
 
 # ── Auto-Classification ───────────────────────────────────
 
-def classify_run(profile: dict) -> tuple[str, str]:
+def classify_run(profile: dict) -> tuple[str, str, float]:
     """
-    Auto-classify a run into a type based on its profile features.
+    Evidence-based run classification using sports science thresholds.
 
-    Returns (type, reasoning).
+    Returns (type, reasoning, confidence).
 
-    Types:
-        - easy: low intensity, even pacing, moderate HR
-        - tempo: sustained moderate-hard effort, even pacing
-        - interval: high pace variance, stops between efforts, long avg stop
-        - long: high distance relative to others, even pacing
-        - race: fast pace, low CV, high HR, no stops
-        - recovery: very slow, very low HR, short
-        - fartlek: moderate variance, deliberate pace changes, mixed intensity
+    Classification hierarchy (based on Seiler, Coggan, Firstbeat research):
+    1. STRUCTURE first — detect intervals by pace CV + high-intensity bouts + stop context
+    2. INTENSITY second — use HR zone distribution (%easy, %hard) and IF where available
+    3. HR zones are the primary intensity classifier, not pace or stops
+    4. Stops only matter for INTERVAL detection, not easy/tempo/race
 
-    Key distinction: traffic light stops (short, 5-15s each) are NOT the same
-    as interval rest stops (long, 30-90s each). Average stop duration matters
-    more than stop count for classification.
+    Stop classification (BJSM 2025, GPS stop detection research):
+    - Traffic lights: avg <20s, HR at onset <78% HRmax, irregular spacing
+    - Interval rests: avg >25s, HR at onset >80% HRmax, regular spacing
+
+    Intensity Factor thresholds (Coggan/TrainingPeaks, validated):
+    - IF < 0.75: recovery  |  0.75-0.85: easy  |  0.85-0.95: tempo
+    - 0.95-1.05: threshold  |  >1.05: VO2max+
+
+    HR zone thresholds (Seiler 3-zone, %HRmax):
+    - Z1 (easy): <78%  |  Z2 (moderate): 78-88%  |  Z3 (hard): >88%
     """
-    pace_cv = profile.get("pace_cv") or 0
+    # ── Extract all available features ──────────────────────
+    # Use pace_cv_moving (stops excluded) if available, fall back to raw pace_cv
+    pace_cv = profile.get("pace_cv_moving") or profile.get("pace_cv") or 0
     stop_count = profile.get("stop_count") or 0
     total_stopped = profile.get("total_stopped_secs") or 0
-    hr_drift = profile.get("hr_drift_pct") or 0
-    fade_index = profile.get("fade_index") or 1.0
-    neg_split = profile.get("negative_split_ratio") or 1.0
     easy_pct = profile.get("time_in_easy_pct") or 0
     hard_pct = profile.get("time_in_hard_pct") or 0
     even_score = profile.get("even_pace_score") or 50
-    intensity = profile.get("intensity_distribution") or ""
-    elevation = profile.get("elevation_profile") or ""
+    intensity_dist = profile.get("intensity_distribution") or ""
+    hr_drift = profile.get("hr_drift_pct") or 0
+
+    # New enhanced metrics (may not exist on older profiles)
+    avg_stop_dur = profile.get("avg_stop_duration_secs")
+    stop_reg = profile.get("stop_regularity")
+    hr_at_stops = profile.get("hr_at_stop_onset_pct")
+    intensity_factor = profile.get("intensity_factor")
+    hi_bouts = profile.get("high_intensity_bouts") or 0
+
+    # Compute avg stop duration if not pre-computed
+    if avg_stop_dur is None and stop_count > 0:
+        avg_stop_dur = total_stopped / stop_count
 
     reasons = []
+    confidence = 0.5  # baseline
 
-    # Average stop duration is the key discriminator:
-    # - Traffic lights / crossings: 5-15s per stop
-    # - Interval rest periods: 30-90s per stop
-    # - Aid stations / long breaks: 90s+ per stop
-    avg_stop_secs = (total_stopped / stop_count) if stop_count > 0 else 0
+    # ── STEP 1: Detect INTERVALS by structure ───────────────
+    # Intervals need: high pace variation + evidence of structured work/rest
+    # Key discriminator: HR was HIGH before stops (interval rest) vs LOW (traffic)
+    is_interval = False
 
-    # Are the stops "deliberate rests" (intervals) or "incidental" (traffic)?
-    has_deliberate_stops = avg_stop_secs >= 25 and stop_count >= 3
-    has_incidental_stops = stop_count > 0 and avg_stop_secs < 25
+    if hi_bouts >= 3 and pace_cv > 0.12:
+        # Multiple high-intensity bouts + variable pacing = intervals
+        is_interval = True
+        reasons.append(f"{hi_bouts} high-intensity bouts, pace CV {pace_cv:.2f}")
+        confidence = 0.85
 
-    # Interval detection: high pace variance + deliberate rest stops
-    # Must have long average stops (not traffic lights) AND high intensity work
-    if pace_cv > 0.15 and has_deliberate_stops and total_stopped > 60:
-        reasons.append(f"high pace variation (CV {pace_cv:.2f}), {stop_count} rest stops (avg {avg_stop_secs:.0f}s)")
-        return "interval", "; ".join(reasons)
+    elif pace_cv > 0.15 and stop_count >= 3:
+        # High pace CV + stops — but are they interval rests or traffic?
+        if hr_at_stops is not None and hr_at_stops > 80:
+            # HR was high when stops began = recovering from hard effort
+            is_interval = True
+            reasons.append(f"pace CV {pace_cv:.2f}, HR {hr_at_stops:.0f}% at stop onset")
+            confidence = 0.80
+        elif avg_stop_dur is not None and avg_stop_dur >= 25:
+            # Long deliberate stops (>25s avg) = structured rest
+            is_interval = True
+            reasons.append(f"pace CV {pace_cv:.2f}, {stop_count} rests avg {avg_stop_dur:.0f}s")
+            confidence = 0.75
+        elif hard_pct and hard_pct > 25:
+            # High hard %, high CV = intervals even without stop context
+            is_interval = True
+            reasons.append(f"pace CV {pace_cv:.2f}, {hard_pct:.0f}% hard effort")
+            confidence = 0.70
 
-    # Also catch intervals with extreme pace CV even with fewer stops
-    if pace_cv > 0.25 and stop_count >= 2 and avg_stop_secs >= 20:
-        reasons.append(f"very high pace variation (CV {pace_cv:.2f}), structured rest stops")
-        return "interval", "; ".join(reasons)
+    if is_interval:
+        return "interval", "; ".join(reasons), confidence
 
-    # Race: fast, consistent, no/minimal stops, high HR
-    if even_score > 70 and stop_count <= 2 and hard_pct and hard_pct > 20:
-        reasons.append(f"consistent ({even_score:.0f}/100), {hard_pct:.0f}% hard effort, minimal stops")
-        return "race", "; ".join(reasons)
+    # ── STEP 2: Classify steady-state runs by INTENSITY ─────
+    # Primary signal: HR zone distribution (time_in_easy_pct, time_in_hard_pct)
+    # Secondary signal: Intensity Factor (IF) where available
 
-    # Tempo: sustained moderate-hard, relatively even pacing
-    if intensity in ("threshold", "polarised") and even_score > 45 and not has_deliberate_stops:
-        reasons.append(f"{intensity} intensity, {even_score:.0f}/100 consistency")
-        return "tempo", "; ".join(reasons)
+    # IF-based classification (most validated single metric)
+    if intensity_factor is not None and intensity_factor > 0:
+        if intensity_factor >= 0.95:
+            reasons.append(f"IF {intensity_factor:.2f} (threshold+)")
+            if even_score > 65 and stop_count <= 2:
+                reasons.append(f"consistent pacing, minimal stops")
+                return "race", "; ".join(reasons), 0.80
+            return "threshold", "; ".join(reasons), 0.75
+        elif intensity_factor >= 0.85:
+            reasons.append(f"IF {intensity_factor:.2f} (tempo zone)")
+            return "tempo", "; ".join(reasons), 0.80
+        elif intensity_factor >= 0.75:
+            reasons.append(f"IF {intensity_factor:.2f} (endurance zone)")
+            # Fall through to HR-based checks for easy vs long
+        elif intensity_factor < 0.65:
+            reasons.append(f"IF {intensity_factor:.2f} (very easy)")
+            return "recovery", "; ".join(reasons), 0.80
 
-    # Easy: mostly easy zone — the primary check is HR intensity, NOT stops/pace CV.
-    # Urban runners will have traffic light stops and pace variation that doesn't
-    # change the fundamental nature of the run: it's still an easy effort.
-    if easy_pct and easy_pct > 60:
-        # This is an easy run. Stops from traffic don't change that.
-        if even_score > 40 or has_incidental_stops:
-            qualifier = ""
-            if has_incidental_stops and stop_count >= 5:
-                qualifier = f" (urban: {stop_count} brief stops, avg {avg_stop_secs:.0f}s)"
-            reasons.append(f"{easy_pct:.0f}% easy zone{qualifier}")
-            return "easy", "; ".join(reasons)
+    # HR zone-based classification (Seiler model)
+    # This is the CORE classifier — HR tells you how hard the effort was,
+    # regardless of stops, pace variation, or GPS noise.
 
-    # Recovery: very easy, short distance, very low effort
-    # Distinguished from easy by being notably shorter/slower
-    if easy_pct and easy_pct > 85 and pace_cv < 0.08:
-        reasons.append(f"{easy_pct:.0f}% in easy zone, very smooth pacing")
-        return "recovery", "; ".join(reasons)
+    # Race: high HR, consistent pacing, no/minimal stops
+    if hard_pct and hard_pct > 30 and even_score > 65 and stop_count <= 2:
+        reasons.append(f"{hard_pct:.0f}% hard effort, {even_score:.0f}/100 consistency, {stop_count} stops")
+        return "race", "; ".join(reasons), 0.80
 
-    # Fartlek: deliberate pace changes but not full interval structure
-    # Needs evidence of intentional surges, not just traffic variation
-    if 0.12 < pace_cv < 0.25 and has_deliberate_stops and hard_pct and hard_pct > 15:
-        reasons.append(f"pace surges (CV {pace_cv:.2f}), {hard_pct:.0f}% hard effort, some rest stops")
-        return "fartlek", "; ".join(reasons)
+    # Tempo: sustained moderate-to-hard, relatively even pacing
+    if hard_pct and hard_pct > 20 and pace_cv < 0.12:
+        reasons.append(f"{hard_pct:.0f}% hard effort, steady pacing (CV {pace_cv:.2f})")
+        return "tempo", "; ".join(reasons), 0.75
 
-    # Easy catch-all: if mostly easy zone, it's easy regardless of pace variation
-    if easy_pct and easy_pct > 50:
-        reasons.append(f"{easy_pct:.0f}% easy zone, some variation")
-        return "easy", "; ".join(reasons)
+    # Threshold: high hard %, but not quite a race (less consistent or some stops)
+    if hard_pct and hard_pct > 30:
+        reasons.append(f"{hard_pct:.0f}% hard effort")
+        return "threshold", "; ".join(reasons), 0.65
 
-    # Default
-    reasons.append(f"CV {pace_cv:.2f}, {stop_count} stops (avg {avg_stop_secs:.0f}s), {even_score:.0f}/100 consistency")
-    return "mixed", "; ".join(reasons)
+    # ── STEP 3: Easy / Recovery (the important one for urban runners) ──
+    # HR is the ONLY signal that matters here. Stops and pace CV from
+    # traffic lights, hills, wind etc. do NOT change the physiological
+    # nature of the run. If your HR was in easy zones, it was an easy run.
+
+    if easy_pct and easy_pct > 55:
+        # This is an easy-intensity run. Period.
+        # Add context about urban conditions but don't change the classification.
+        qualifier_parts = []
+        if stop_count > 0 and avg_stop_dur is not None and avg_stop_dur < 20:
+            qualifier_parts.append(f"{stop_count} brief stops")
+        if pace_cv > 0.10:
+            qualifier_parts.append(f"pace variation from terrain/traffic")
+
+        base_reason = f"{easy_pct:.0f}% in easy HR zones"
+        if qualifier_parts:
+            base_reason += f" ({', '.join(qualifier_parts)})"
+        reasons.append(base_reason)
+
+        # Distinguish recovery from easy: recovery = very easy + very smooth
+        if easy_pct > 85 and pace_cv < 0.06 and (not hard_pct or hard_pct < 5):
+            return "recovery", "; ".join(reasons), 0.75
+
+        return "easy", "; ".join(reasons), 0.80
+
+    # Fartlek: moderate intensity variation without structured intervals
+    # Must have BOTH easy and hard portions + deliberate pace changes
+    if hard_pct and 15 < hard_pct < 40 and easy_pct and easy_pct > 30:
+        if pace_cv > 0.10:
+            reasons.append(f"mixed intensity ({easy_pct:.0f}% easy, {hard_pct:.0f}% hard), variable pacing")
+            return "fartlek", "; ".join(reasons), 0.65
+
+    # ── STEP 4: Fallback ────────────────────────────────────
+    # If we got here, signals are ambiguous
+    parts = [f"CV {pace_cv:.2f}"]
+    if easy_pct:
+        parts.append(f"{easy_pct:.0f}% easy")
+    if hard_pct:
+        parts.append(f"{hard_pct:.0f}% hard")
+    if stop_count:
+        parts.append(f"{stop_count} stops")
+    reasons.append(", ".join(parts))
+    return "mixed", "; ".join(reasons), 0.30
 
 
-def classify_all(profiles: list[dict]) -> list[tuple[str, dict, str]]:
-    """Classify all profiles and return (type, profile, reasoning) tuples."""
+def classify_all(profiles: list[dict]) -> list[tuple[str, dict, str, float]]:
+    """Classify all profiles and return (type, profile, reasoning, confidence) tuples."""
     results = []
     for p in profiles:
-        run_type, reasoning = classify_run(p)
-        results.append((run_type, p, reasoning))
+        result = classify_run(p)
+        if len(result) == 3:
+            run_type, reasoning, confidence = result
+        else:
+            # Backward compat with old 2-tuple return
+            run_type, reasoning = result[0], result[1]
+            confidence = 0.5
+        results.append((run_type, p, reasoning, confidence))
     return results
 
 
@@ -284,7 +358,7 @@ def compute_cluster_centroids(profiles: list[dict]) -> dict[str, list[float]]:
     type_vectors: dict[str, list[list[float]]] = defaultdict(list)
 
     for p in profiles:
-        run_type, _ = classify_run(p)
+        run_type = classify_run(p)[0]
         vec = _extract_vector(p)
         if any(v != 0 for v in vec):
             type_vectors[run_type].append(vec)
