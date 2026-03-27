@@ -515,6 +515,7 @@ def compute_profile(
     streams: dict[str, list],
     activity_data: dict | None = None,
     hr_threshold: int = 170,
+    athlete_threshold_speed: float | None = None,
 ) -> RunProfile:
     """
     Compute a full RunProfile from stream data.
@@ -707,10 +708,18 @@ def compute_profile(
     )
 
     # ── Intensity factor ──────────────────────────────
-    threshold_speed = 3.33  # default 5:00/km
-    if activity_data and "threshold_pace" in activity_data:
-        threshold_speed = activity_data["threshold_pace"]
-    profile.intensity_factor = _compute_intensity_factor(velocity, threshold_speed)
+    # Priority: (1) caller-provided athlete threshold, (2) activity-level threshold,
+    # (3) don't compute IF (None) — a default 5:00/km would misclassify fast runners
+    threshold_speed: float | None = athlete_threshold_speed
+    if threshold_speed is None and activity_data:
+        tp = activity_data.get("threshold_pace") or activity_data.get("icu_threshold_pace")
+        if tp and tp > 0:
+            threshold_speed = 1000.0 / tp  # sec/km → m/s
+    profile.intensity_factor = (
+        _compute_intensity_factor(velocity, threshold_speed)
+        if threshold_speed is not None
+        else None
+    )
 
     # ── Elevation metrics ──────────────────────────────
 
@@ -718,9 +727,36 @@ def compute_profile(
         _elevation_profile(altitude, distance)
 
     # ── Intensity distribution ─────────────────────────
+    # Prefer intervals.icu HR zone times (accurate, athlete-calibrated)
+    # over our velocity-based proxy (uses generic threshold defaults)
+    hr_zones_used = False
+    if activity_data:
+        zone_times = activity_data.get("icu_hr_zone_times")
+        if zone_times and sum(zone_times) > 0:
+            total_z = sum(zone_times)
+            # ICU typically returns 7 zones: Z1(recovery)-Z7(neuromuscular)
+            # Easy = Z1+Z2 (aerobic base), Hard = Z4+ (above threshold)
+            easy_secs = sum(zone_times[:2]) if len(zone_times) >= 2 else zone_times[0]
+            hard_secs = sum(zone_times[3:]) if len(zone_times) > 3 else 0
+            profile.time_in_easy_pct = round((easy_secs / total_z) * 100, 1)
+            profile.time_in_hard_pct = round((hard_secs / total_z) * 100, 1)
+            # Distribution type from zone balance
+            mod_pct = round(((total_z - easy_secs - hard_secs) / total_z) * 100, 1)
+            easy_pct = profile.time_in_easy_pct
+            hard_pct = profile.time_in_hard_pct
+            if easy_pct > 70 and hard_pct > 10:
+                profile.intensity_distribution = "polarised"
+            elif mod_pct > 40:
+                profile.intensity_distribution = "threshold"
+            elif easy_pct > 60:
+                profile.intensity_distribution = "pyramidal"
+            else:
+                profile.intensity_distribution = "mixed"
+            hr_zones_used = True
 
-    profile.intensity_distribution, profile.time_in_easy_pct, profile.time_in_hard_pct = \
-        _classify_intensity(velocity, heartrate)
+    if not hr_zones_used:
+        profile.intensity_distribution, profile.time_in_easy_pct, profile.time_in_hard_pct = \
+            _classify_intensity(velocity, heartrate)
 
     # ── catch22 shape features ─────────────────────────
 

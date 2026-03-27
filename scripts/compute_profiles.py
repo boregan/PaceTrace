@@ -126,6 +126,26 @@ async def process_activities(username: str, days: int = 365, force: bool = False
 
     print(f"Found {len(all_activities)} total activities")
 
+    # Fetch athlete's actual threshold pace from sport settings (used for IF calculation)
+    athlete_threshold_speed: float | None = None
+    async with httpx.AsyncClient(
+        base_url=ICU_API,
+        auth=httpx.BasicAuth("API_KEY", api_key),
+        timeout=30.0,
+    ) as client:
+        try:
+            sport_resp = await client.get(f"/athlete/{athlete_id}/sport-settings/Run")
+            sport_resp.raise_for_status()
+            sport = sport_resp.json()
+            # threshold_pace is in sec/km on intervals.icu
+            tp = sport.get("threshold_pace") or sport.get("pace") or sport.get("thresholdPace")
+            if tp and tp > 0:
+                athlete_threshold_speed = 1000.0 / tp  # convert sec/km → m/s
+                print(f"  Athlete threshold pace: {int(tp//60)}:{int(tp%60):02d}/km "
+                      f"({athlete_threshold_speed:.3f} m/s)")
+        except Exception as e:
+            print(f"  Could not fetch threshold pace: {e} — using 5:00/km default")
+
     # Filter to runs and fetch full data
     processed = 0
     skipped = 0
@@ -199,6 +219,7 @@ async def process_activities(username: str, days: int = 365, force: bool = False
                     athlete_id=athlete_id,
                     streams=streams,
                     activity_data=act,
+                    athlete_threshold_speed=athlete_threshold_speed,
                 )
                 profile_data = profile.to_db_row()
                 summary = profile_summary(profile)
