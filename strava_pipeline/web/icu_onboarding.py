@@ -10,6 +10,8 @@ Pages:
 import asyncio
 import io
 import json
+import shutil
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -444,20 +446,20 @@ async def upload_history_export(
 
     api_key = user["icu_api_key"]
 
-    # Read ZIP into memory (limit 500MB)
+    # Stream upload to a temp file — avoids loading the whole ZIP into RAM
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     try:
-        content = await file.read()
-        if len(content) > 500 * 1024 * 1024:
-            return JSONResponse(
-                {"success": False, "error": "File too large (max 500MB). Try splitting it."},
-                status_code=400,
-            )
-        zf = zipfile.ZipFile(io.BytesIO(content))
+        shutil.copyfileobj(file.file, tmp)
+        tmp.flush()
+        tmp_path = tmp.name
+    finally:
+        tmp.close()
+
+    try:
+        zf = zipfile.ZipFile(tmp_path)
     except Exception as e:
-        return JSONResponse(
-            {"success": False, "error": f"Invalid ZIP file: {e}"},
-            status_code=400,
-        )
+        Path(tmp_path).unlink(missing_ok=True)
+        return JSONResponse({"success": False, "error": f"Invalid ZIP file: {e}"}, status_code=400)
 
     # Collect activity files (Garmin nested dirs + nested ZIPs)
     activity_files = sorted([n for n in zf.namelist() if _is_activity_file(n)])
@@ -475,6 +477,8 @@ async def upload_history_export(
                 pass
 
     if not activity_files and not nested_zip_data:
+        zf.close()
+        Path(tmp_path).unlink(missing_ok=True)
         return JSONResponse(
             {"success": False, "error": "No activity files (FIT/GPX/TCX) found in the ZIP"},
             status_code=400,
@@ -487,49 +491,53 @@ async def upload_history_export(
 
         uploaded = skipped = failed = idx = 0
 
-        async with httpx.AsyncClient(
-            base_url="https://intervals.icu/api/v1",
-            auth=httpx.BasicAuth("API_KEY", api_key),
-            timeout=30.0,
-        ) as client:
+        try:
+            async with httpx.AsyncClient(
+                base_url="https://intervals.icu/api/v1",
+                auth=httpx.BasicAuth("API_KEY", api_key),
+                timeout=30.0,
+            ) as client:
 
-            async def _upload(fname: str, file_bytes: bytes):
-                nonlocal uploaded, skipped, failed, idx
-                idx += 1
-                try:
-                    resp = await client.post(
-                        "/athlete/0/activities",
-                        files={"file": (fname, file_bytes)},
-                    )
-                    if resp.status_code in (200, 201):
-                        uploaded += 1
-                        status = "uploaded"
-                    elif resp.status_code == 409:
-                        skipped += 1
-                        status = "exists"
-                    else:
+                async def _upload(fname: str, file_bytes: bytes):
+                    nonlocal uploaded, skipped, failed, idx
+                    idx += 1
+                    try:
+                        resp = await client.post(
+                            "/athlete/0/activities",
+                            files={"file": (fname, file_bytes)},
+                        )
+                        if resp.status_code in (200, 201):
+                            uploaded += 1
+                            status = "uploaded"
+                        elif resp.status_code == 409:
+                            skipped += 1
+                            status = "exists"
+                        else:
+                            failed += 1
+                            status = f"error {resp.status_code}"
+                    except Exception as e:
                         failed += 1
-                        status = f"error {resp.status_code}"
-                except Exception as e:
-                    failed += 1
-                    status = str(e)[:80]
+                        status = str(e)[:80]
+                    return status
 
-                return status
+                for name in activity_files:
+                    fname = Path(name).name
+                    status = await _upload(fname, zf.read(name))
+                    yield _sse({"type": "progress", "idx": idx, "total": total,
+                                "file": fname, "status": status,
+                                "uploaded": uploaded, "skipped": skipped, "failed": failed})
+                    await asyncio.sleep(0.3)
 
-            for name in activity_files:
-                fname = Path(name).name
-                status = await _upload(fname, zf.read(name))
-                yield _sse({"type": "progress", "idx": idx, "total": total,
-                            "file": fname, "status": status,
-                            "uploaded": uploaded, "skipped": skipped, "failed": failed})
-                await asyncio.sleep(0.3)
+                for fname, file_bytes in nested_zip_data:
+                    status = await _upload(fname, file_bytes)
+                    yield _sse({"type": "progress", "idx": idx, "total": total,
+                                "file": fname, "status": status,
+                                "uploaded": uploaded, "skipped": skipped, "failed": failed})
+                    await asyncio.sleep(0.3)
 
-            for fname, file_bytes in nested_zip_data:
-                status = await _upload(fname, file_bytes)
-                yield _sse({"type": "progress", "idx": idx, "total": total,
-                            "file": fname, "status": status,
-                            "uploaded": uploaded, "skipped": skipped, "failed": failed})
-                await asyncio.sleep(0.3)
+        finally:
+            zf.close()
+            Path(tmp_path).unlink(missing_ok=True)
 
         yield _sse({"type": "done", "uploaded": uploaded, "skipped": skipped,
                     "failed": failed, "total": total})
