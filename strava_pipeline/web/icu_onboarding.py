@@ -255,6 +255,18 @@ SUCCESS_HTML = """
             Drop whichever ZIP you get below — we handle both formats.
         </div>
 
+        <div class="note" style="margin-bottom:12px">
+            ⚠️ <b>Avoid duplicates:</b> If your watch already syncs to intervals.icu (via Garmin Connect or Strava),
+            set a cutoff date so we only import your older history — not runs that are already there.
+        </div>
+
+        <div style="margin-bottom:12px">
+            <label style="font-size:13px;color:#999;display:block;margin-bottom:6px">
+                Only import activities <b>before</b> this date (leave blank to import everything)
+            </label>
+            <input type="date" id="cutoff-date" style="background:#111;border:1px solid #333;border-radius:8px;padding:10px 12px;color:#fff;font-size:14px;width:200px">
+        </div>
+
         <div class="dropzone" id="dropzone">
             <div class="dropzone-text">
                 <b>Drop your Garmin or Strava export ZIP here</b><br>
@@ -308,9 +320,11 @@ async function handleFile(file) {{
     progressText.textContent = `Reading ${{file.name}} (${{(file.size / 1024 / 1024).toFixed(1)}} MB)...`;
     progressLog.textContent = '';
 
+    const cutoff = document.getElementById('cutoff-date').value;
     const formData = new FormData();
     formData.append('file', file);
     formData.append('username', USERNAME);
+    if (cutoff) formData.append('cutoff_date', cutoff);
 
     try {{
         const resp = await fetch('/v2/upload', {{ method: 'POST', body: formData }});
@@ -339,7 +353,8 @@ async function handleFile(file) {{
                 try {{ evt = JSON.parse(dataLine.slice(6)); }} catch {{ continue; }}
 
                 if (evt.type === 'start') {{
-                    progressText.textContent = `Phase 1/2 — uploading ${{evt.actTotal}} activities...`;
+                    const cutoffNote = evt.cutoff ? ` (before ${{evt.cutoff}})` : '';
+                    progressText.textContent = `Phase 1/2 — uploading ${{evt.actTotal}} activities${{cutoffNote}}...`;
 
                 }} else if (evt.type === 'activity') {{
                     const pct = Math.round((evt.idx / evt.total) * 45); // activities = 0-45%
@@ -462,6 +477,7 @@ def _sse(data: dict) -> str:
 async def upload_history_export(
     username: str = Form(...),
     file: UploadFile = File(...),
+    cutoff_date: str = Form(""),
 ):
     """Accept a Garmin or Strava export ZIP, stream SSE progress back as it uploads."""
 
@@ -474,6 +490,7 @@ async def upload_history_export(
 
     api_key = user["icu_api_key"]
     athlete_id = user.get("icu_athlete_id") or "0"
+    cutoff = cutoff_date.strip() or None  # "YYYY-MM-DD" or None
 
     # Stream upload to a temp file — avoids loading the whole ZIP into RAM
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
@@ -509,6 +526,8 @@ async def upload_history_export(
     # data (no activities) should still be importable
     try:
         wellness_records = build_wellness_records(zf)
+        if cutoff:
+            wellness_records = [r for r in wellness_records if r["id"] < cutoff]
     except Exception:
         wellness_records = []
 
@@ -535,7 +554,7 @@ async def upload_history_export(
         uploaded = skipped = failed = 0
         well_uploaded = 0
         try:
-            yield _sse({"type": "start", "actTotal": act_total, "wellTotal": well_total})
+            yield _sse({"type": "start", "actTotal": act_total, "wellTotal": well_total, "cutoff": cutoff})
 
             # ── Phase 1: Activities ──────────────────────────────────────────
             sem = asyncio.Semaphore(5)
