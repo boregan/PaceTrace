@@ -6,6 +6,112 @@ Deployed at `pacetrace.fly.dev` (Fly.io, London region).
 
 ---
 
+## Setup
+
+### 1. Prerequisites
+
+- Python 3.12+
+- [intervals.icu](https://intervals.icu) account with API key
+- [Supabase](https://supabase.com) project (free tier is fine)
+- [flyctl](https://fly.io/docs/hands-on/install-flyctl/) for deployment
+
+### 2. Environment variables
+
+```env
+# intervals.icu
+INTERVALS_ICU_API_KEY=your_api_key
+INTERVALS_ICU_ATHLETE_ID=iXXXXXX
+
+# Supabase (for run profiles + wellness data)
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_KEY=your_service_role_key
+
+# Athlete config
+PACETRACE_USER=ben
+PACETRACE_MAX_HR=185
+PACETRACE_REST_HR=55
+
+# Optional: Garmin wellness sync
+GARMIN_EMAIL=your@email.com
+GARMIN_PASSWORD=your_password
+
+# Optional: API auth for web endpoints
+API_SECRET=pick_a_random_string
+```
+
+### 3. Supabase migrations
+
+Run all migrations in order via the Supabase SQL editor or CLI:
+
+```
+supabase/migrations/001_create_activities.sql
+supabase/migrations/002_create_streams.sql
+supabase/migrations/003_create_athlete_tokens.sql
+supabase/migrations/004_add_enrichment_columns.sql
+supabase/migrations/005_create_wellness.sql
+supabase/migrations/007_create_pacetrace_users.sql
+supabase/migrations/20260326_run_profiles.sql
+supabase/migrations/20260327_improve_profiles.sql
+```
+
+### 4. Compute run profiles
+
+Run profiles power the pattern recognition tools (`query_run_profiles`, `find_similar_runs`, `classify_my_runs`). They're computed locally and stored in Supabase:
+
+```bash
+# Process all runs
+python scripts/compute_profiles.py --user ben
+
+# Incremental update (last 30 days only)
+python scripts/compute_profiles.py --user ben --days 30
+
+# Force reprocess everything
+python scripts/compute_profiles.py --user ben --force
+```
+
+### 5. Garmin wellness sync (optional)
+
+```bash
+python scripts/sync_garmin.py --user ben
+```
+
+### 6. Deploy to Fly.io
+
+```bash
+flyctl deploy
+```
+
+Set secrets in Fly:
+
+```bash
+flyctl secrets set INTERVALS_ICU_API_KEY=... INTERVALS_ICU_ATHLETE_ID=... \
+  SUPABASE_URL=... SUPABASE_SERVICE_KEY=... \
+  PACETRACE_USER=ben PACETRACE_MAX_HR=185
+```
+
+### 7. Connect to Claude
+
+**Claude Desktop** — add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "pacetrace": {
+      "command": "/path/to/.venv_mcp/bin/python",
+      "args": ["/path/to/strava-pipeline/mcp_server_v2.py"],
+      "env": {
+        "PACETRACE_USER": "ben",
+        "PACETRACE_MAX_HR": "185"
+      }
+    }
+  }
+}
+```
+
+**Claude.ai** — add the SSE endpoint: `https://pacetrace.fly.dev/sse`
+
+---
+
 ## Tools
 
 ### Activity Data
