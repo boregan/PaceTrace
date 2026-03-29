@@ -1,207 +1,114 @@
-# Strava Pipeline
+# PaceTrace
 
-Pulls full time-series (stream) data from the Strava API for every run activity — historical backfill and ongoing sync — and stores it in Supabase so Claude can query it without manual file uploads.
+An MCP server that gives Claude deep access to your running data. Connects to intervals.icu for activities, fitness metrics, and planned workouts — augmented with weather data, pre-computed run fingerprints, and sports-science analysis models. Ask Claude anything about your training: how fit you are, where your weaknesses are, what you could race, whether you're at risk of injury.
 
-## What it does
-
-- **Backfill**: fetches all historical run activities + per-second stream data (HR, pace, altitude, cadence) into Supabase
-- **Webhook**: a FastAPI server that auto-syncs new activities as you log them
-- **Query helper**: downsamples stream data into compact summaries for Claude's context window
-
-## Prerequisites
-
-- Python 3.11+
-- A [Strava API application](https://www.strava.com/settings/api)
-- A [Supabase](https://supabase.com) project (free tier is fine)
+Deployed at `pacetrace.fly.dev` (Fly.io, London region).
 
 ---
 
-## Setup
+## Tools
 
-### 1. Install dependencies
+### Activity Data
 
-```bash
-cd strava-pipeline
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+**`get_activity`** `activity_id`
+Full details for a single run: pace, Grade Adjusted Pace, effort-adjusted pace (normalised for heat/humidity/elevation/fatigue), weather conditions, HR zones, auto-detected intervals, efficiency factor, aerobic decoupling, training load, gear, and elevation.
 
-### 2. Configure environment
+**`get_recent`** `days` `limit`
+Recent runs with key metrics — pace, distance, HR, training load, form (TSB), and shoes.
 
-```bash
-cp .env.example .env
-```
+**`get_week`** `date`
+Weekly summary: total distance, time, runs, average pace/HR, daily breakdown, and CTL/ATL/TSB trend for the week.
 
-Edit `.env` with your values:
+**`search_activities`** `query` `date_from` `date_to` `limit`
+Search by name, tag, or date range. Find specific workouts, races, or training blocks.
 
-```env
-STRAVA_CLIENT_ID=your_client_id
-STRAVA_CLIENT_SECRET=your_client_secret
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_KEY=your_service_role_key
-STRAVA_WEBHOOK_VERIFY_TOKEN=pick_a_random_string
-```
+**`get_intervals`** `activity_id`
+Auto-detected intervals within a run: warmup, work intervals, recovery, cooldown. Each with pace, GAP, HR, cadence, stride, decoupling, and intensity.
 
-### 3. Create Supabase tables
-
-Run both migration files in the Supabase SQL editor (or via the CLI):
-
-```
-supabase/migrations/001_create_activities.sql
-supabase/migrations/002_create_streams.sql
-```
-
-### 4. Authorise your Strava account
-
-```bash
-python scripts/backfill.py auth --user ben
-```
-
-This opens a browser, walks through OAuth, and saves tokens to `config/users/ben.env`.
-
-### 5. Run the backfill
-
-```bash
-python scripts/backfill.py run --user ben
-```
-
-For ~650 activities this will take multiple runs across several days due to Strava's rate limits (100 req/15 min, 1000/day). The script is resumable — re-run it and it picks up where it left off.
-
-**Monitor progress:**
-
-```bash
-python scripts/backfill.py status
-```
-
-**Options:**
-
-```bash
-# Only fetch activities after a date (Unix timestamp)
-python scripts/backfill.py run --user ben --after 1700000000
-
-# Only fill missing stream data (skip activity list fetch)
-python scripts/backfill.py run --user ben --streams-only
-
-# Preview without writing to DB
-python scripts/backfill.py run --user ben --dry-run
-```
+**`get_streams`** `activity_id` `types`
+Second-by-second time-series data: HR, pace, GAP, cadence, altitude, GPS. Use for splits, drift patterns, and pacing strategy analysis.
 
 ---
 
-## Webhook (ongoing sync)
+### Fitness & Form
 
-### Deploy to Railway
+**`get_fitness`** `days`
+CTL (fitness), ATL (fatigue), TSB (form), ramp rate, and daily training load history. Shows whether you're building, recovering, or overreaching.
 
-1. Push this repo to GitHub
-2. Create a new Railway project → Deploy from GitHub repo
-3. Set all environment variables from `.env` in the Railway dashboard
-4. Add `config/users/ben.env` contents as individual env vars OR use Railway's file mount feature
+**`get_athlete_profile`**
+Running zones (pace, HR, power), thresholds, FTP, LTHR, threshold pace, GAP model, current CTL/ATL/TSB, and shoes.
 
-### Register the webhook
+**`get_day_readiness`** `date`
+Today's snapshot: current form, recent load, HRV, sleep, resting HR, and subjective scores.
 
-After deploying:
+**`get_training_load`** `weeks`
+Weekly load analysis — load per week, intensity distribution, acute:chronic workload ratio, and polarisation index.
 
-```bash
-WEBHOOK_URL=https://your-app.railway.app python scripts/setup_webhook.py
-```
+**`get_training_phase`** `weeks`
+Auto-detect current training phase: BASE, BUILD, PEAK, TAPER, RECOVERY, or MAINTENANCE. Analyses volume trends, intensity distribution, and CTL/ATL/TSB to show where you are in the training cycle.
 
-Strava will now POST to your server whenever you log a new run.
+**`get_wellness`** `days`
+Daily wellness from Garmin: HRV, resting HR, sleep duration/score, weight, readiness, stress, fatigue, and mood.
 
-### Local testing with ngrok
-
-```bash
-uvicorn strava_pipeline.webhook.app:app --reload
-# In another terminal:
-ngrok http 8000
-WEBHOOK_URL=https://xxxx.ngrok.io python scripts/setup_webhook.py
-```
+**`get_planned_workouts`** `days_ahead`
+Upcoming planned sessions, races, and goals from the intervals.icu calendar.
 
 ---
 
-## Query helper (for Claude)
+### Performance & Racing
 
-Get a Claude-ready summary of any activity:
+**`get_pace_curves`** `days` `gap`
+Best pace efforts across all runs — fastest times at every distance from 400m to marathon. Optionally gradient-adjusted.
 
-```bash
-python scripts/backfill.py summary 12345678901
-```
+**`get_pace_progression`** `days` `distances`
+How your pace at key distances (1km, 5km, 10km, half marathon) has changed over time. Spots fitness gains and plateaus.
 
-Or from Python:
+**`predict_race`** `seed_distance` `seed_time_secs` `auto`
+Predict finish times at all standard distances using three models (VDOT/Daniels, Riegel, Cameron). Also computes marathon shape — whether your training volume and long run distance support the target race.
 
-```python
-from strava_pipeline.claude.query_helper import build_context, build_context_json
+**`get_critical_speed`**
+Compute Critical Speed (CS) and D' — the FTP equivalent for runners. CS is the pace sustainable for ~30–60 minutes; D' is your anaerobic distance reserve above it. Fitted from best efforts at multiple distances.
 
-# Text format — paste directly into a Claude prompt
-text = build_context(activity_id=12345678901, max_points=120, max_hr=185)
+**`get_effort_adjusted`** `activity_id`
+Effort-adjusted pace for a run: normalises for weather (temperature, humidity, dew point), elevation, and fatigue to show what it equates to in ideal conditions (10°C, flat, fresh).
 
-# Structured dict — for API usage
-data = build_context_json(activity_id=12345678901)
-```
-
-`max_points=120` means one sample per ~30 seconds for a 1-hour run — enough to see the shape of the session without flooding Claude's context.
+**`compare_runs`** `id1` `id2`
+Side-by-side comparison: pace, GAP, HR, cadence, efficiency, aerobic decoupling, training load, elevation, form at the time, and gear.
 
 ---
 
-## Adding a second user (e.g. your brother)
+### Pattern Recognition
 
-```bash
-python scripts/backfill.py auth --user alex
-python scripts/backfill.py run --user alex
-```
+**`analyse_runs`** `days` `query`
+Analyse multiple runs across a date range — finds runs with stops, fastest, longest, hardest, hilliest, or highest HR. Uses activity-level metrics so it's efficient across large date ranges.
 
-Each user gets their own token file in `config/users/`. The webhook routes events by `athlete_id` automatically.
+**`query_run_profiles`** `query` `limit`
+Query pre-computed fingerprints across your entire history. Each run has been profiled for pacing pattern (negative/positive splits, consistency), HR drift, stops, elevation profile, and intensity distribution. Instant results across hundreds of runs.
 
----
+Options: `negative_splits`, `positive_splits`, `most_consistent`, `least_consistent`, `stops`, `hr_drift`, `steady_hr`, `hilly`, `flat`, `fastest_1k`, `all`
 
-## Rate limits
+**`find_similar_runs`** `activity_id` `stream` `limit`
+Runs with similar patterns to a given run. Uses catch22 time-series fingerprints to match pacing shape, HR profile, cadence, and elevation across your full history. Match on a specific stream or overall similarity.
 
-Strava allows:
-- **100 requests per 15 minutes**
-- **1000 requests per day**
+**`classify_my_runs`**
+Auto-classify all profiled runs into types (easy, tempo, interval, long, race, recovery, fartlek). Shows training distribution percentages and flags anomaly runs.
 
-Each activity needs 1 request for its stream data. For 650 activities that's ~2 day-windows to backfill. The rate limiter handles this automatically — just re-run the script each day until done.
-
-Current usage:
-
-```bash
-python scripts/backfill.py status
-```
+**`find_similar_intervals`** `min_duration_secs` `max_duration_secs` `min_intensity` `max_intensity`
+Find runs containing intervals of a specific duration and intensity. Compare interval quality across training blocks.
 
 ---
 
-## Project structure
+### Injury & Risk
 
-```
-strava-pipeline/
-├── .env.example                  # environment variable template
-├── railway.toml                  # Railway deployment config
-├── requirements.txt
-├── config/users/                 # per-user token files (gitignored)
-├── scripts/
-│   ├── backfill.py               # CLI: auth, run, status, summary
-│   └── setup_webhook.py          # one-time webhook registration
-├── strava_pipeline/
-│   ├── auth/
-│   │   ├── token_manager.py      # OAuth2 token refresh
-│   │   └── oauth_flow.py         # one-time OAuth setup
-│   ├── backfill/
-│   │   ├── runner.py             # orchestrator
-│   │   ├── activity_fetcher.py   # fetch + store activity list
-│   │   └── stream_fetcher.py     # fetch + store stream data
-│   ├── db/
-│   │   ├── client.py             # Supabase singleton
-│   │   ├── activities.py         # activities table operations
-│   │   └── streams.py            # streams table operations
-│   ├── webhook/
-│   │   ├── app.py                # FastAPI app
-│   │   └── handlers.py           # GET/POST /webhook handlers
-│   ├── claude/
-│   │   └── query_helper.py       # build_context() for LLM prompts
-│   └── utils/
-│       ├── rate_limiter.py       # 15-min + daily request throttling
-│       └── user_loader.py        # scans config/users/ directory
-└── supabase/migrations/
-    ├── 001_create_activities.sql
-    └── 002_create_streams.sql
-```
+**`get_injury_risk`** `days`
+Evidence-based injury risk assessment. Analyses ACWR (0.8–1.3 safe zone), training monotony, session spikes, week-over-week ramp rate, and consecutive hard days. Returns a risk score (0–100) with specific flags and recommendations.
+
+---
+
+### Gear & Routes
+
+**`get_shoes`**
+All shoes with total distance, activity count, and retirement reminders.
+
+**`get_routes`**
+Recurring routes with activity counts, last run date, and most-used routes.
