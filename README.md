@@ -218,3 +218,48 @@ All shoes with total distance, activity count, and retirement reminders.
 
 **`get_routes`**
 Recurring routes with activity counts, last run date, and most-used routes.
+
+---
+
+## Models & References
+
+### Fitness (CTL / ATL / TSB)
+Banister's impulse-response model (TRIMP). Chronic Training Load (CTL) uses a 42-day exponential weighted average; Acute Training Load (ATL) uses 7 days. TSB = CTL − ATL.
+- Banister et al. (1975) — *Systems model of training for athletic performance*
+- Karvonen et al. (1957) — HR reserve method for zone calculation
+
+### Race Prediction
+Three models are run and averaged to a consensus prediction:
+- **VDOT / Daniels-Gilbert** — VO2max proxy derived from a race performance, used to predict equivalent times at other distances. Daniels & Gilbert (1979), *Oxygen Power*
+- **Riegel formula** — `T2 = T1 × (D2 / D1)^1.06`. Riegel (1981), *Athletic Records and Human Endurance*, American Scientist
+- **Cameron model** — nonlinear regression fitted to world records. Cameron (1997)
+- **Marathon Shape** readiness metric — required endurance = `distance^1.23`, compared to actual training volume. Runalyze methodology
+
+### Critical Speed / D'
+Linear distance-time model: `Distance = CS × Time + D'`. CS is the aerobic ceiling; D' is the finite anaerobic reserve above it.
+- Poole et al. (2016) — *Critical Power: An Important Fatigue Threshold in Exercise Physiology*, Mayo Clinic Proceedings
+- Morton (1996) — *A 3-parameter critical power model*, Ergonomics
+- Jones & Vanhatalo (2017) — *The 'Critical Power' Concept*, Sports Medicine
+
+### Injury Risk
+- **ACWR (Acute:Chronic Workload Ratio)** — Gabbett (2016), *The training-injury prevention paradox*, BJSM
+- **Training monotony & strain** — Foster (1998), *Monitoring training in athletes*, Journal of Strength and Conditioning Research
+- **Predictors of running injuries** — Nielsen et al. (2014), BJSM
+- **Session spikes as injury predictor** — BJSM (2025)
+
+### Effort-Adjusted Pace
+Normalises pace for heat/humidity, elevation, and fatigue (TSB).
+- Cheuvront & Haymes (2001) — heat degradation in distance running
+- Vihma (2010) — temperature effects on marathon performance, *International Journal of Sports Medicine*
+- Minetti et al. (2002) — energy cost of gradient running, *Journal of Applied Physiology*
+- intervals.icu GAP model — elevation adjustment baseline
+
+### Training Phase Detection
+- Friel (2009) — *The Triathlete's Training Bible*, periodization model
+- TrainingPeaks Annual Training Plan (ATP) methodology
+
+### Run Fingerprinting (catch22)
+Each run is profiled with 22 canonical time-series features per stream (pace, HR, cadence, altitude) enabling similarity search and run classification across entire history.
+- Lubba et al. (2019) — *catch22: CAnonical Time-series CHaracteristics*, Data Mining and Knowledge Discovery
+- Fulcher & Jones (2021) — empirical evaluation of time-series feature sets
+- Metric definitions: TrainingPeaks, Golden Cheetah, Runalyze
